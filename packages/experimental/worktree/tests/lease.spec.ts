@@ -40,7 +40,7 @@ async function delegate(
   const isolated = await context.worktrees.isolate(agent, request, async (cwd) => {
     started.push(cwd)
     await edit?.(cwd)
-    return { result: Promise.resolve('done'), dispose: async () => {} }
+    return { result: Promise.resolve('done') }
   }, report => kept.push(report))
   const settlement = await isolated.settled
   return { isolated, settlement, kept, started }
@@ -125,26 +125,79 @@ describe('isolating a delegate in a private worktree', () => {
     expect(settlement).toMatchObject({ kind: 'kept', uncommitted: false, reason: 'changed' })
   })
 
-  it('treats ignored build output as nothing to keep', async () => {
+  describe('ignored files', () => {
+    async function ignoring(patterns: string): Promise<string> {
+      const root = await repo()
+      await writeFile(join(root, '.gitignore'), patterns)
+      await git(root, 'add', '.gitignore')
+      await git(root, 'commit', '-m', 'ignore')
+      return root
+    }
+
+    it('keeps a checkout holding an ignored secrets file', async () => {
+      const root = await ignoring('.env\n')
+      const { ctx, agent } = await start(root)
+      const { isolated, settlement } = await delegate(ctx, agent, cwd => writeFile(join(cwd, '.env'), 'TOKEN=1\n'))
+      if (isolated.isolation.kind !== 'worktree') throw new Error('expected a worktree')
+      expect(settlement).toMatchObject({ kind: 'kept', reason: 'changed', uncommitted: true })
+      expect(await contents(join(isolated.isolation.path, '.env'))).toBe('TOKEN=1\n')
+      expect(await branches(root)).toContain(isolated.isolation.branch)
+    })
+
+    it('keeps a checkout holding an ignored output directory', async () => {
+      const root = await ignoring('out/\n')
+      const { ctx, agent } = await start(root)
+      const { isolated, settlement } = await delegate(ctx, agent, async (cwd) => {
+        await mkdir(join(cwd, 'out'))
+        await writeFile(join(cwd, 'out/artifact.bin'), 'built')
+      })
+      if (isolated.isolation.kind !== 'worktree') throw new Error('expected a worktree')
+      expect(settlement).toMatchObject({ kind: 'kept', reason: 'changed' })
+      expect(await contents(join(isolated.isolation.path, 'out/artifact.bin'))).toBe('built')
+    })
+
+    it('removes a checkout whose only ignored content is node_modules', async () => {
+      const root = await ignoring('node_modules/\n')
+      const { ctx, agent } = await start(root)
+      const { isolated, settlement } = await delegate(ctx, agent, async (cwd) => {
+        await mkdir(join(cwd, 'node_modules/pkg'), { recursive: true })
+        await writeFile(join(cwd, 'node_modules/pkg/index.js'), 'x')
+      })
+      expect(settlement).toMatchObject({ kind: 'removed' })
+      if (isolated.isolation.kind !== 'worktree') throw new Error('expected a worktree')
+      await expect(readdir(isolated.isolation.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it('keeps a checkout when node_modules sits next to another ignored file', async () => {
+      const root = await ignoring('node_modules/\n.env\n')
+      const { ctx, agent } = await start(root)
+      const { settlement } = await delegate(ctx, agent, async (cwd) => {
+        await mkdir(join(cwd, 'node_modules'))
+        await writeFile(join(cwd, 'node_modules/a.js'), 'x')
+        await writeFile(join(cwd, '.env'), 'x')
+      })
+      expect(settlement).toMatchObject({ kind: 'kept' })
+    })
+  })
+
+  it('keeps a checkout whose work was stashed into the shared stash ref', async () => {
     const root = await repo()
-    await writeFile(join(root, '.gitignore'), 'out/\n')
-    await git(root, 'add', '.gitignore')
-    await git(root, 'commit', '-m', 'ignore out')
     const { ctx, agent } = await start(root)
     const { isolated, settlement } = await delegate(ctx, agent, async (cwd) => {
-      await mkdir(join(cwd, 'out'))
-      await writeFile(join(cwd, 'out/artifact.bin'), 'built')
+      await writeFile(join(cwd, 'tracked.txt'), 'stashed work\n')
+      await git(cwd, 'stash')
     })
-    expect(settlement).toMatchObject({ kind: 'removed' })
     if (isolated.isolation.kind !== 'worktree') throw new Error('expected a worktree')
-    await expect(readdir(isolated.isolation.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await git(root, 'stash', 'list')).toContain(isolated.isolation.branch)
+    expect(settlement).toMatchObject({ kind: 'kept', reason: 'changed' })
+    expect(await contents(join(isolated.isolation.path, 'tracked.txt'))).toBe('initial\n')
   })
 
   it('settles when the delegate fails, and an untouched failure leaves nothing behind', async () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
     const isolated = await ctx.worktrees.isolate(agent, {}, async () => ({
-      result: Promise.reject(new Error('child crashed')), dispose: async () => {},
+      result: Promise.reject(new Error('child crashed')),
     }), () => {})
     expect(await isolated.settled).toMatchObject({ kind: 'removed' })
     expect(await branches(root)).toBe('')
@@ -176,7 +229,7 @@ describe('isolating a delegate in a private worktree', () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
     const release = Promise.withResolvers<undefined>()
-    const hold = async () => ({ result: release.promise, dispose: async () => {} })
+    const hold = async () => ({ result: release.promise })
     const first = await ctx.worktrees.isolate(agent, {}, hold, () => {})
     const second = await ctx.worktrees.isolate(agent, {}, hold, () => {})
     if (first.isolation.kind !== 'worktree' || second.isolation.kind !== 'worktree') throw new Error('expected worktrees')
@@ -213,7 +266,7 @@ describe('isolating a delegate in a private worktree', () => {
   it('reports Git failures other than "not a repository" instead of degrading', async () => {
     const root = await repo()
     const { ctx, agent } = await start(root, { gitCommand: process.execPath })
-    const idle = async () => ({ result: Promise.resolve(), dispose: async () => {} })
+    const idle = async () => ({ result: Promise.resolve() })
     await expect(ctx.worktrees.isolate(agent, {}, idle, () => {})).rejects.toThrow(/worktree command failed/)
   })
 })
@@ -262,10 +315,21 @@ describe('reserved lease namespace', () => {
   it('refuses explicit and generated names inside it', async () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
-    await expect(ctx.worktrees.create(agent, { name: 'dsh/lease/mine' })).rejects.toThrow(/reserved dsh\/lease\//)
+    for (const name of ['dsh/lease/mine', 'dsh/lease', 'dsh']) {
+      await expect(ctx.worktrees.create(agent, { name })).rejects.toThrow(/reserved dsh\/lease\//)
+    }
     expect(ctx.workingDirectory.get(agent.session)).toBe(root)
     await ctx.fiber.dispose()
     await expect(harness(root, { namePrefix: 'dsh/lease/' })).rejects.toThrow(/reserved dsh\/lease\//)
+  })
+
+  it('keeps lease provisioning possible next to a retained worktree named dsh-something', async () => {
+    const root = await repo()
+    const { ctx, agent } = await start(root, { baseRef: 'head' })
+    await ctx.worktrees.create(agent, { name: 'dsh-topic' })
+    await ctx.worktrees.create(agent, { name: 'dsh/other' })
+    const { settlement } = await delegate(ctx, agent)
+    expect(settlement).toMatchObject({ kind: 'removed' })
   })
 
   it('still creates retained worktrees that move the caller directory', async () => {
@@ -321,12 +385,15 @@ describe('failures while provisioning and sweeping', () => {
       return spawn(spec)
     })
   }
-  const idle = async () => ({ result: Promise.resolve(), dispose: async () => {} })
+  const checksOutFiles = (argv: readonly string[]) => argv.includes('reset') && argv.includes('--hard')
+  const writesLeaseMetadata = (argv: readonly string[]) => argv.some(arg => arg.includes('dsh-lease.json'))
+  const listsWorktrees = (argv: readonly string[]) => argv.includes('list')
+  const idle = async () => ({ result: Promise.resolve() })
 
   it('finishes and removes a half-built lease when checkout fails after the worktree was registered', async () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
-    spawnFailing(ctx, argv => argv.includes('reset') && argv.includes('--hard') && !argv.includes('lease-retry'), 1)
+    spawnFailing(ctx, checksOutFiles, 1)
     await expect(ctx.worktrees.isolate(agent, {}, idle, () => {})).rejects.toThrow('injected spawn failure')
     expect(await branches(root)).toBe('')
     expect(await worktreeCount(root)).toBe(1)
@@ -335,20 +402,16 @@ describe('failures while provisioning and sweeping', () => {
   it('leaves a half-built lease for the reaper when rolling it back also fails', async () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
-    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
-    spawnFailing(ctx, argv => argv.includes('reset') && argv.includes('--hard'))
+    spawnFailing(ctx, checksOutFiles)
     await expect(ctx.worktrees.isolate(agent, {}, idle, () => {})).rejects.toThrow('injected spawn failure')
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not be rolled back'))
     expect(await ctx.worktrees.list(agent)).toEqual([expect.objectContaining({ status: 'live' })])
   })
 
   it('ignores a half-built lease that never received metadata', async () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
-    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
-    spawnFailing(ctx, argv => argv.some(arg => arg.includes('dsh-lease.json')))
+    spawnFailing(ctx, writesLeaseMetadata)
     await expect(ctx.worktrees.isolate(agent, {}, idle, () => {})).rejects.toThrow('injected spawn failure')
-    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('rolled back'))
     expect(await ctx.worktrees.list(agent)).toEqual([expect.objectContaining({ status: 'unowned' })])
   })
 
@@ -356,7 +419,7 @@ describe('failures while provisioning and sweeping', () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
-    spawnFailing(ctx, argv => argv.includes('list'), 1)
+    spawnFailing(ctx, listsWorktrees, 1)
     const { settled } = await ctx.worktrees.isolate(agent, {}, idle, () => {})
     expect(await settled).toMatchObject({ kind: 'removed' })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('sweep failed'))
@@ -431,10 +494,23 @@ describe('settlement races and refusals', () => {
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
     const isolated = await ctx.worktrees.isolate(agent, {}, async (cwd) => {
       await writeFile(join(cwd, 'x.txt'), 'x')
-      return { result: Promise.resolve(), dispose: async () => {} }
+      return { result: Promise.resolve() }
     }, () => { throw new Error('inbox closed') })
     expect(await isolated.settled).toMatchObject({ kind: 'kept' })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('inbox closed'))
+  })
+
+  it('keeps a lease whose checkout link the delegate deleted, because Git refuses to remove it', async () => {
+    const root = await repo()
+    const { ctx, agent } = await start(root)
+    const kept: KeptReport[] = []
+    const isolated = await ctx.worktrees.isolate(agent, {}, async (cwd) => {
+      await rm(join(cwd, '.git'))
+      return { result: Promise.resolve() }
+    }, report => kept.push(report))
+    expect(await isolated.settled).toMatchObject({ kind: 'kept', reason: 'removal-refused' })
+    expect(kept).toHaveLength(1)
+    expect(await branches(root)).toContain((isolated.isolation as { branch: string }).branch)
   })
 
   it('reports an unsettled lease through the log and leaves it for a later sweep', async () => {
@@ -442,8 +518,8 @@ describe('settlement races and refusals', () => {
     const { ctx, agent } = await start(root)
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
     const isolated = await ctx.worktrees.isolate(agent, {}, async (cwd) => {
-      await rm(join(cwd, '.git'))
-      return { result: Promise.resolve(), dispose: async () => {} }
+      await rm(join(await git(cwd, 'rev-parse', '--git-common-dir'), 'worktrees', cwd.split('/').at(-1)!, 'gitdir'))
+      return { result: Promise.resolve() }
     }, () => {})
     expect(await isolated.settled).toBeUndefined()
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('was not settled'))

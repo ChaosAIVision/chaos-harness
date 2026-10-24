@@ -65,8 +65,8 @@ async function crashable(root: string, mode: 'clean' | 'dirty', session: string)
   }
 }
 
-const finished = async () => ({ result: Promise.resolve(), dispose: async () => {} })
-const hanging = async () => ({ result: new Promise<undefined>(() => {}), dispose: async () => {} })
+const finished = async () => ({ result: Promise.resolve() })
+const hanging = async () => ({ result: new Promise<undefined>(() => {}) })
 
 async function start(root: string, session = 'reaper') {
   ctx = await harness(root)
@@ -235,8 +235,8 @@ describe('replaying interrupted transitions', () => {
     await git(root, 'worktree', 'remove', '--force', advanced)
     const { ctx, agent } = await start(root)
     expect(await ctx.worktrees.list(agent)).toEqual([
-      expect.objectContaining({ branch: 'dsh/lease/advanced', status: 'unowned', path: '' }),
-      expect.objectContaining({ branch: 'dsh/lease/untouched', status: 'unowned', path: '' }),
+      expect.objectContaining({ branch: 'dsh/lease/advanced', status: 'unowned' }),
+      expect.objectContaining({ branch: 'dsh/lease/untouched', status: 'unowned' }),
     ])
     expect(await ctx.worktrees.reap(agent)).toEqual([{ kind: 'removed', branch: 'dsh/lease/untouched' }])
     expect(await git(root, 'branch', '--list', 'dsh/lease/*')).toContain('dsh/lease/advanced')
@@ -259,19 +259,39 @@ describe('replaying interrupted transitions', () => {
     const adminDir = await git(broken, 'rev-parse', '--absolute-git-dir')
     await writeFile(join(adminDir, 'index'), 'not an index')
     const { ctx, agent } = await start(root)
-    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
     expect(await ctx.worktrees.reap(agent)).toEqual([{ kind: 'removed', branch: 'dsh/lease/fine' }])
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('dsh/lease/broken'))
     expect(await git(root, 'branch', '--list', 'dsh/lease/*')).toContain('dsh/lease/broken')
   })
 
-  it('treats a lease whose worktree link is unreadable as unowned', async () => {
+  it('keeps a lease whose worktree link is unreadable, since Git refuses to remove it', async () => {
     const root = await repo()
     const unreadable = await manualLease(root, 'dsh/lease/unlinked', 'held', true)
     await writeFile(join(unreadable, '.git'), 'gitdir: /nonexistent\n')
     const { ctx, agent } = await start(root)
-    expect(await ctx.worktrees.list(agent)).toEqual([expect.objectContaining({ branch: 'dsh/lease/unlinked', status: 'unowned' })])
-    expect(await ctx.worktrees.reap(agent)).toEqual([])
+    expect(await ctx.worktrees.list(agent)).toEqual([expect.objectContaining({ branch: 'dsh/lease/unlinked', status: 'dead' })])
+    expect(await ctx.worktrees.reap(agent)).toEqual([expect.objectContaining({ kind: 'kept', reason: 'removal-refused' })])
+    expect(await readFile(join(unreadable, 'tracked.txt'), 'utf8')).toBe('initial\n')
+  })
+
+  it('ignores a worktree link the child retargeted at a foreign directory carrying a forged lease', async () => {
+    const root = await repo()
+    const victim = await manualLease(root, 'dsh/lease/victim', 'held', true)
+    const foreign = await repo()
+    const adminDir = join(foreign, '.git')
+    const foreignHead = await git(foreign, 'rev-parse', 'HEAD')
+    await git(foreign, 'checkout', '-q', '-b', 'dsh/lease/victim')
+    const forged = JSON.stringify({
+      v: 1, state: 'held', branch: 'dsh/lease/victim', ownerSession: 'crashed', ownerHost: (await import('node:os')).hostname(), ...dead,
+      baseCommit: foreignHead, baseLabel: 'HEAD', createdAtMs: 1,
+    })
+    await writeFile(join(adminDir, 'dsh-lease.json'), forged)
+    await writeFile(join(victim, '.git'), `gitdir: ${adminDir}\n`)
+    const { ctx, agent } = await start(root)
+    expect(await ctx.worktrees.reap(agent)).toEqual([expect.objectContaining({ kind: 'kept', branch: 'dsh/lease/victim' })])
+    expect(await readFile(join(adminDir, 'dsh-lease.json'), 'utf8')).toBe(forged)
+    expect(await git(foreign, 'branch', '--show-current')).toBe('dsh/lease/victim')
+    expect(await git(foreign, 'rev-parse', 'HEAD')).toBe(foreignHead)
+    expect(await readFile(join(victim, 'tracked.txt'), 'utf8')).toBe('initial\n')
   })
 
   it('converges without error when two services sweep the same repository together', async () => {

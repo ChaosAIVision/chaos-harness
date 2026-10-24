@@ -92,7 +92,7 @@ describe.skipIf(!sandboxUsable)('worktree standing sandbox policy', () => {
     ctx = await harness(root, {}, 'workspace-write')
     const agent = testAgent(ctx, root)
     const confine = vi.spyOn(ctx.sandbox, 'confine')
-    const activation = async () => ({ result: Promise.resolve(), dispose: async () => {} })
+    const activation = async () => ({ result: Promise.resolve() })
 
     const clean = await ctx.worktrees.isolate(agent, {}, activation, () => {})
     expect(await clean.settled).toMatchObject({ kind: 'removed' })
@@ -117,7 +117,7 @@ describe.skipIf(!sandboxUsable)('worktree standing sandbox policy', () => {
     root = await repository(process.cwd())
     ctx = await harness(root, {}, 'read-only')
     const agent = testAgent(ctx, root)
-    const activation = async () => ({ result: Promise.resolve(), dispose: async () => {} })
+    const activation = async () => ({ result: Promise.resolve() })
     const refusal = /permission denied|operation not permitted|read-only file system/i
     await expect(ctx.worktrees.isolate(agent, {}, activation, () => {})).rejects.toThrow(refusal)
     expect(await git(root, 'branch', '--list', 'dsh/lease/*')).toBe('')

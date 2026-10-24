@@ -22,6 +22,9 @@ export interface LeaseFile {
   createdAtMs: number
 }
 
+const COMMIT_ID = /^[0-9a-f]{40,64}$/
+const LEASE_BRANCH = /^dsh\/lease\/[A-Za-z0-9][A-Za-z0-9_-]*$/
+
 const STATES: readonly LeaseState[] = ['provisioning', 'held', 'settling', 'kept']
 
 function isLeaseState(value: string): value is LeaseState {
@@ -31,7 +34,7 @@ function isLeaseState(value: string): value is LeaseState {
 /**
  * Parse lease metadata read from disk.
  * @param text - file contents.
- * @returns the record, or undefined when the text is not a version 1 lease file.
+ * @returns the record, or undefined when the text is not a version 1 lease file with a full object id and a lease-namespace branch.
  */
 export function parseLeaseFile(text: string): LeaseFile | undefined {
   let value: unknown
@@ -47,6 +50,7 @@ export function parseLeaseFile(text: string): LeaseFile | undefined {
   if (v !== 1 || typeof state !== 'string' || !isLeaseState(state)) return undefined
   if (typeof branch !== 'string' || typeof ownerSession !== 'string' || typeof ownerHost !== 'string') return undefined
   if (typeof baseCommit !== 'string' || typeof baseLabel !== 'string') return undefined
+  if (!COMMIT_ID.test(baseCommit) || !LEASE_BRANCH.test(branch)) return undefined
   if (typeof ownerPid !== 'number' || !Number.isSafeInteger(ownerPid)) return undefined
   if (typeof createdAtMs !== 'number' || !Number.isSafeInteger(createdAtMs)) return undefined
   if (ownerStart !== null && typeof ownerStart !== 'string') return undefined
@@ -85,6 +89,10 @@ export function reapAction(status: LeaseStatus, state: LeaseState | undefined): 
 export interface Inspection {
   /** Tracked modifications or non-ignored untracked files. */
   dirty: boolean
+  /** Ignored files other than dependency directories, which Git would delete with the worktree. */
+  ignored: boolean
+  /** A `git stash` made inside the checkout left an entry in the shared stash ref. */
+  stashed: boolean
   head: string
   /** Output of `symbolic-ref -q HEAD`; undefined when detached. */
   symbolicRef: string | undefined
@@ -95,13 +103,38 @@ export interface Inspection {
 export type SettleDecision = { action: 'remove' } | { action: 'keep'; reason: KeptReason }
 
 /**
+ * Classify `git status --porcelain=v1 -z --ignored=matching` output.
+ * @param output - NUL-delimited status entries.
+ * @returns whether tracked or untracked work exists, and whether any ignored path lies outside `node_modules`.
+ */
+export function parseStatus(output: string): { dirty: boolean; ignored: boolean } {
+  let dirty = false
+  let ignored = false
+  for (const entry of output.split('\0')) {
+    if (entry.length === 0) continue
+    if (!entry.startsWith('!! ')) dirty = true
+    else if (!entry.slice(3).split('/').includes('node_modules')) ignored = true
+  }
+  return { dirty, ignored }
+}
+
+/**
+ * Whether the shared stash reflog holds an entry made from a lease checkout.
+ * @param subjects - reflog subjects of `refs/stash`, one per line.
+ * @param branch - lease branch the checkout had checked out.
+ */
+export function stashedFrom(subjects: string, branch: string): boolean {
+  return subjects.split('\n').some(line => line.startsWith(`WIP on ${branch}:`) || line.startsWith(`On ${branch}:`))
+}
+
+/**
  * A lease is removable only when nothing the child could have produced remains.
  * @param inspection - facts read from the checkout.
  * @param lease - lease branch and base commit.
  * @returns remove when clean at the base on the lease branch, otherwise keep.
  */
 export function decide(inspection: Inspection, lease: { branch: string; baseCommit: string }): SettleDecision {
-  const unchanged = !inspection.dirty
+  const unchanged = !inspection.dirty && !inspection.ignored && !inspection.stashed
     && inspection.head === lease.baseCommit
     && inspection.symbolicRef === `refs/heads/${lease.branch}`
     && inspection.branchTip === lease.baseCommit
@@ -122,7 +155,6 @@ export function decideOrphan(tip: string, created: string | undefined): 'delete'
 export interface WorktreeEntry {
   path: string
   branch: string | undefined
-  prunable: boolean
 }
 
 /**
@@ -137,12 +169,10 @@ export function parseWorktreeList(output: string): WorktreeEntry[] {
     if (field.length === 0) {
       current = undefined
     } else if (field.startsWith('worktree ')) {
-      current = { path: field.slice('worktree '.length), branch: undefined, prunable: false }
+      current = { path: field.slice('worktree '.length), branch: undefined }
       entries.push(current)
     } else if (current !== undefined && field.startsWith('branch refs/heads/')) {
       current.branch = field.slice('branch refs/heads/'.length)
-    } else if (current !== undefined && field.startsWith('prunable')) {
-      current.prunable = true
     }
   }
   return entries
@@ -155,6 +185,15 @@ export function parseWorktreeList(output: string): WorktreeEntry[] {
  */
 export function isLeaseBranch(branch: string): boolean {
   return branch.startsWith(LEASE_PREFIX)
+}
+
+/**
+ * Whether a requested branch name collides with the lease namespace. `dsh` and `dsh/lease` are reserved too:
+ * as branch names they would block every `dsh/lease/<id>` ref by a file-versus-directory conflict.
+ * @param name - requested branch name.
+ */
+export function isReservedName(name: string): boolean {
+  return name === 'dsh' || name === 'dsh/lease' || isLeaseBranch(name)
 }
 
 /**

@@ -1,27 +1,27 @@
 /** Creates Git worktrees: retained and entered on request, or leased to a delegate and settled when it stops. */
 
 import { randomUUID } from 'node:crypto'
-import { join, relative } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-fs'
-import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
+import type {} from '@deepseek-ai/dsh-sandbox'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
-import { PREPARE_DIRECTORY, WRITE_FILE } from './directory.ts'
-import { classify, decide, decideOrphan, isLeaseBranch, LEASE_PREFIX, parseLeaseFile, parseWorktreeList, reapAction } from './lease.ts'
-import type { Inspection, LeaseFile } from './lease.ts'
-import { currentOwner, HOST, ownerAlive } from './owner.ts'
-import { runCommand } from './process.ts'
-import type { ProcessConfig } from './process.ts'
+import { checkout, incomplete } from './checkout.ts'
+import type { WorktreeSpec } from './checkout.ts'
+import { bindGit, repository } from './git-context.ts'
+import type { GitContext, Repository, ResolvedConfig, Runtime } from './git-context.ts'
+import { isReservedName, LEASE_PREFIX } from './lease.ts'
+import { Leases } from './leases.ts'
 import type {
-  CreatedWorktree, CreateWorktreeRequest, IsolatedActivation, Isolation, KeptReason, KeptReport, LeaseStatus, LeaseSummary, Settlement,
+  CreatedWorktree, CreateWorktreeRequest, IsolatedActivation, Isolated, KeptReport, LeaseSummary, Settlement,
 } from './types.ts'
 
 export type {
-  CreatedWorktree, CreateWorktreeRequest, IsolatedActivation, Isolation, KeptReason, KeptReport, LeaseStatus, LeaseSummary, Settlement,
+  CreatedWorktree, CreateWorktreeRequest, IsolatedActivation, Isolated, Isolation, KeptReason, KeptReport, LeaseStatus, LeaseSummary,
+  Settlement,
 } from './types.ts'
 export { formatKept } from './lease.ts'
 
@@ -48,48 +48,11 @@ export interface Config {
   baseRef?: 'remote-default' | 'head'
 }
 
-type ResolvedConfig = Required<Config> & ProcessConfig
-
-interface WorktreeSpec {
-  branch: string
-  revision: string
-}
-
-type CommandResult = Awaited<ReturnType<typeof runCommand>>
-
-/** Commands bound to one sandbox policy, working directory, and cancellation signal. */
-interface GitContext {
-  readonly policy: SandboxExecutionPolicy
-  readonly cwd: string
-  readonly signal: AbortSignal
-  readonly git: (directory: string, args: string[], allowedExitCodes?: number[], env?: NodeJS.ProcessEnv) => Promise<CommandResult>
-  readonly node: (directory: string, script: string, ...args: string[]) => Promise<CommandResult>
-}
-
-/** A lease checkout together with its parsed metadata and admin directory. */
-interface LeaseRef {
-  path: string
-  branch: string
-  adminDir: string
-  file: LeaseFile
-}
-
 /** Per-call options of {@link WorktreeService.isolate}. */
 export interface IsolateRequest {
   /** Source repository directory; relative paths resolve against the agent's current directory. Omission uses that directory. */
   cwd?: string
 }
-
-/** Result of {@link WorktreeService.isolate}. */
-export interface Isolated<T extends IsolatedActivation> {
-  /** The value returned by the caller's start function. */
-  activation: T
-  isolation: Isolation
-  /** Resolves after settlement and kept-report delivery; never rejects. Undefined when settlement failed. */
-  settled: Promise<Settlement | undefined>
-}
-
-const LEASE_FILE = 'dsh-lease.json'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -119,9 +82,10 @@ export class WorktreeService extends Service {
   })
 
   private readonly config: ResolvedConfig
+  private readonly runtime: Runtime
+  private readonly leases: Leases
   private readonly lifetime = new AbortController()
   private readonly pending = new Set<Promise<CreatedWorktree>>()
-  private exclusion: Promise<void> = Promise.resolve()
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'worktrees')
@@ -130,7 +94,7 @@ export class WorktreeService extends Service {
     if (!relativePath(`${this.config.namePrefix}name`) || this.config.namePrefix.startsWith('-')) {
       throw new Error('worktree: namePrefix must produce a relative branch name')
     }
-    if (isLeaseBranch(`${this.config.namePrefix}name`)) throw new Error(`worktree: namePrefix must not use the reserved ${LEASE_PREFIX} namespace`)
+    if (isReservedName(`${this.config.namePrefix}name`)) throw new Error(`worktree: namePrefix must not use the reserved ${LEASE_PREFIX} namespace`)
     for (const key of ['gitCommand', 'nodeCommand'] as const) {
       if (this.config[key].trim().length === 0) throw new Error(`worktree: ${key} must not be empty`)
     }
@@ -140,6 +104,8 @@ export class WorktreeService extends Service {
         throw new Error(`worktree: ${key} must be a positive integer no greater than ${MAX_TIMER_DELAY_MS}`)
       }
     }
+    this.runtime = { ctx, config: this.config }
+    this.leases = new Leases(this.runtime)
     ctx.effect(() => async () => {
       this.lifetime.abort(new Error('worktree service disposed'))
       await Promise.allSettled(this.pending)
@@ -172,7 +138,7 @@ export class WorktreeService extends Service {
   private resolve(request: CreateWorktreeRequest): WorktreeSpec {
     const branch = request.name ?? `${this.config.namePrefix}${randomUUID()}`
     if (!relativePath(branch) || branch.startsWith('-')) throw new Error('worktree name must be a relative Git branch name')
-    if (isLeaseBranch(branch)) throw new Error(`worktree name must not use the reserved ${LEASE_PREFIX} namespace`)
+    if (isReservedName(branch)) throw new Error(`worktree name must not use the reserved ${LEASE_PREFIX} namespace`)
     const revision = request.from ?? 'HEAD'
     if (revision.length === 0) throw new Error('worktree from must name a local commit, branch, or tag')
     return { branch, revision }
@@ -181,9 +147,10 @@ export class WorktreeService extends Service {
   /**
    * Run a delegate in a private worktree and settle it when the delegate stops.
    * The caller's working directory never changes. A clean checkout is removed with its branch; one with
-   * edits, commits, or a moved HEAD is kept and reported through `onKept`. Outside a Git work tree, or in a
-   * repository without commits, the delegate runs in the caller's directory and `isolation` says why.
-   * Leases whose owning process died are settled first. A lease owned by a live process, or by another host, is never touched.
+   * edits, ignored files other than `node_modules`, commits, a stash entry, or a moved HEAD is kept and
+   * reported through `onKept`. Outside a Git work tree, or in a repository without commits, the delegate
+   * runs in the caller's directory and `isolation` says why. Leases whose owning process died are settled
+   * first. A lease owned by a live process, or by another host, is never touched.
    * @param agent - caller whose Session selects the file policy and owns the lease.
    * @param request - optional source directory.
    * @param start - starts the delegate in the directory it must use and returns its activation.
@@ -198,53 +165,13 @@ export class WorktreeService extends Service {
     onKept: (report: KeptReport) => void,
     signal?: AbortSignal,
   ): Promise<Isolated<T>> {
-    const operationSignal = this.operation(signal)
-    const git = await this.context(agent, operationSignal, request.cwd)
-    const source = await this.repository(git)
-    if ('reason' in source) {
-      const activation = await start(git.cwd)
-      return { activation, isolation: { kind: 'degraded', cwd: git.cwd, reason: source.reason }, settled: Promise.resolve(undefined) }
-    }
-    const { root } = source
-    const session = String(agent.session.id)
-    await this.reapForSession(git, root, session, onKept)
-    const base = await this.resolveBase(git, root, source.head)
-    const branch = `${LEASE_PREFIX}${randomUUID().replaceAll('-', '').slice(0, 12)}`
-    const owner = await currentOwner()
-    const file: LeaseFile = {
-      v: 1, state: 'provisioning', branch, ownerSession: session, ownerHost: HOST, ownerPid: owner.pid, ownerStart: owner.start,
-      baseCommit: base.commit, baseLabel: base.label, createdAtMs: Date.now(),
-    }
-    let added: string | undefined
-    const created = await this.exclusive(async () => {
-      try {
-        const checkout = await this.checkout(git, { branch, revision: base.commit }, async (path) => {
-          added = path
-          await this.writeLease(git, path, file)
-        })
-        await this.writeLease(git, checkout.path, { ...file, state: 'held' })
-        return checkout
-      } catch (error) {
-        if (added !== undefined) await this.abandon(git, root, added, branch)
-        throw error
-      }
-    })
-    const offset = relative(root, git.cwd)
-    const cwd = offset.length === 0 || offset.startsWith('..') ? created.path : join(created.path, offset)
-    let activation: T
-    try {
-      activation = await start(cwd)
-    } catch (error) {
-      await this.abandon(git, root, created.path, branch)
-      throw error
-    }
-    const settled = activation.result.then(() => undefined, () => undefined)
-      .then(() => this.finish(git.policy, root, created.path, branch, onKept))
-    return {
-      activation,
-      isolation: { kind: 'worktree', path: created.path, cwd, branch, baseCommit: base.commit, baseLabel: base.label },
-      settled,
-    }
+    return this.withRepository(
+      agent, signal, request.cwd,
+      (git, source) => this.leases.isolate(git, source, String(agent.session.id), start, onKept),
+      async (git, reason) => ({
+        activation: await start(git.cwd), isolation: { kind: 'degraded', cwd: git.cwd, reason }, settled: Promise.resolve(undefined),
+      }),
+    )
   }
 
   /**
@@ -256,11 +183,7 @@ export class WorktreeService extends Service {
    * @returns the leases settled by this call; empty outside a Git work tree.
    */
   async reap(agent: Agent, signal?: AbortSignal): Promise<Settlement[]> {
-    const operationSignal = this.operation(signal)
-    const git = await this.context(agent, operationSignal)
-    const source = await this.repository(git)
-    if ('reason' in source) return []
-    return (await this.sweep(git, source.root)).map(entry => entry.settlement)
+    return this.withRepository(agent, signal, undefined, (git, { root }) => this.leases.reap(git, root), () => [])
   }
 
   /**
@@ -270,18 +193,7 @@ export class WorktreeService extends Service {
    * @returns one summary per lease worktree or orphaned lease branch; empty outside a Git work tree.
    */
   async list(agent: Agent, signal?: AbortSignal): Promise<LeaseSummary[]> {
-    const operationSignal = this.operation(signal)
-    const git = await this.context(agent, operationSignal)
-    const source = await this.repository(git)
-    if ('reason' in source) return []
-    const found = await this.inspectLeases(git, source.root)
-    return [
-      ...found.leases.map(lease => ({
-        path: lease.path, branch: lease.branch, status: lease.status,
-        ownerSession: lease.file?.ownerSession, baseCommit: lease.file?.baseCommit,
-      })),
-      ...found.orphans.map(({ branch }) => ({ path: '', branch, status: 'unowned' as const, ownerSession: undefined, baseCommit: undefined })),
-    ]
+    return this.withRepository(agent, signal, undefined, (git, { root }) => this.leases.list(git, root), () => [])
   }
 
   private operation(signal?: AbortSignal): AbortSignal {
@@ -290,17 +202,20 @@ export class WorktreeService extends Service {
     return combined
   }
 
-  private bind(policy: SandboxExecutionPolicy, cwd: string, signal: AbortSignal): GitContext {
-    const exec = (directory: string, argv: [string, ...string[]], allowedExitCodes?: number[], env?: NodeJS.ProcessEnv) => runCommand(
-      this.ctx, this.config, policy, directory, argv, signal, allowedExitCodes, env,
-    )
-    return {
-      policy, cwd, signal,
-      git: (directory, args, allowedExitCodes, env) => exec(
-        directory, [this.config.gitCommand, '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], allowedExitCodes, env,
-      ),
-      node: (directory, script, ...args) => exec(directory, [this.config.nodeCommand, '--input-type=module', '-e', script, ...args]),
-    }
+  /**
+   * Bind the caller's policy and directory, locate its repository, and run `inRepository`; `outside` runs
+   * instead when the directory is not a Git work tree with commits.
+   */
+  private async withRepository<T>(
+    agent: Agent,
+    signal: AbortSignal | undefined,
+    requestedCwd: string | undefined,
+    inRepository: (git: GitContext, source: Repository) => Promise<T>,
+    outside: (git: GitContext, reason: string) => T | Promise<T>,
+  ): Promise<T> {
+    const git = await this.context(agent, this.operation(signal), requestedCwd)
+    const source = await repository(this.runtime, git)
+    return 'reason' in source ? outside(git, source.reason) : inRepository(git, source)
   }
 
   private async context(agent: Agent, signal: AbortSignal, requestedCwd?: string): Promise<GitContext> {
@@ -308,11 +223,11 @@ export class WorktreeService extends Service {
     const cwd = requestedCwd === undefined
       ? current
       : this.ctx.fs.processPath(await this.ctx.fs.resolve(requestedCwd, { cwd: current, signal }))
-    return this.bind(this.ctx.sandboxPolicy.resolve({ session: agent.session }), cwd, signal)
+    return bindGit(this.runtime, this.ctx.sandboxPolicy.resolve({ session: agent.session }), cwd, signal)
   }
 
   private async createCheckout(agent: Agent, spec: WorktreeSpec, signal: AbortSignal): Promise<CreatedWorktree> {
-    const created = await this.checkout(await this.context(agent, signal), spec)
+    const created = await checkout(this.runtime, await this.context(agent, signal), spec)
     try {
       const path = await this.ctx.workingDirectory.set(agent, created.path, signal)
       return { ...created, path }
@@ -320,293 +235,6 @@ export class WorktreeService extends Service {
       throw incomplete(created.branch, created.path, error)
     }
   }
-
-  /**
-   * Create the branch and checkout for a spec. The caller's working directory is never changed.
-   * @param onAdded - runs once Git has registered the worktree and before its files are written.
-   */
-  private async checkout(
-    git: GitContext,
-    { branch, revision }: WorktreeSpec,
-    onAdded?: (path: string) => Promise<void>,
-  ): Promise<CreatedWorktree> {
-    const { cwd, signal } = git
-    const run = git.git
-    await run(cwd, ['check-ref-format', `refs/heads/${branch}`])
-    const rootOutput = await run(cwd, ['rev-parse', '--show-toplevel'])
-    const rootTarget = await this.ctx.fs.resolve(rootOutput.stdout.replace(/\r?\n$/, ''), { cwd, signal })
-    const repositoryRoot = this.ctx.fs.processPath(rootTarget)
-    const base = await run(repositoryRoot, ['rev-parse', '--verify', '--end-of-options', `${revision}^{commit}`])
-    const baseCommit = base.stdout.trim()
-    const existing = await run(repositoryRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], [0, 1])
-    if (existing.exitCode === 0) throw new Error(`worktree branch already exists: ${branch}`)
-    const pool = await this.ctx.fs.resolve(this.config.directory, { cwd: repositoryRoot, signal })
-    const poolPath = this.ctx.fs.processPath(pool)
-    const destination = await this.ctx.fs.resolve(branch, { cwd: poolPath, signal })
-    const path = this.ctx.fs.processPath(destination)
-    if (await this.ctx.fs.lstat(path, undefined, signal) !== undefined) throw new Error(`worktree path already exists: ${path}`)
-    try {
-      await git.node(repositoryRoot, PREPARE_DIRECTORY, poolPath, path)
-      await run(repositoryRoot, ['--work-tree', repositoryRoot, 'worktree', 'add', '--no-checkout', '-b', branch, '--', path, baseCommit])
-      await onAdded?.(path)
-      await run(path, ['--work-tree', path, 'reset', '--hard', '--no-recurse-submodules', baseCommit], undefined, await this.filterOverrides(git, path))
-      return { path: this.ctx.fs.processPath(await this.ctx.fs.resolve(path, { signal })), branch, baseCommit, repositoryRoot }
-    } catch (error) {
-      throw incomplete(branch, path, error)
-    }
-  }
-
-  /** Environment overrides that disable every configured clean, smudge, process, and required filter driver. */
-  private async filterOverrides(git: GitContext, path: string): Promise<NodeJS.ProcessEnv> {
-    const configured = await git.git(path, ['config', '--null', '--name-only', '--get-regexp', '^filter\\.'], [0, 1])
-    const drivers = new Set<string>()
-    for (const key of configured.stdout.split('\0')) {
-      const separator = key.lastIndexOf('.')
-      if (separator > 'filter.'.length && ['clean', 'smudge', 'process', 'required'].includes(key.slice(separator + 1))) {
-        drivers.add(key.slice('filter.'.length, separator))
-      }
-    }
-    const overrides: NodeJS.ProcessEnv = { GIT_CONFIG_COUNT: String(drivers.size * 4) }
-    let index = 0
-    for (const driver of drivers) {
-      for (const attribute of ['clean', 'smudge', 'process', 'required']) {
-        overrides[`GIT_CONFIG_KEY_${index}`] = `filter.${driver}.${attribute}`
-        overrides[`GIT_CONFIG_VALUE_${index}`] = attribute === 'required' ? 'false' : ''
-        index++
-      }
-    }
-    return overrides
-  }
-
-  /** Serialize provisioning and sweeps so a sweep never sees a branch whose worktree Git has not registered yet. */
-  private exclusive<T>(action: () => Promise<T>): Promise<T> {
-    const result = this.exclusion.then(action, action)
-    this.exclusion = result.then(() => undefined, () => undefined)
-    return result
-  }
-
-  private async repository(git: GitContext): Promise<{ root: string; head: string } | { reason: string }> {
-    const top = await git.git(git.cwd, ['rev-parse', '--show-toplevel'], [0, 128])
-    if (top.exitCode !== 0) {
-      if (/not a git repository|must be run in a work tree/i.test(top.stderr)) return { reason: `${git.cwd} is not inside a Git work tree` }
-      throw new Error(`worktree command failed (128): ${top.stderr.trim()}`)
-    }
-    const target = await this.ctx.fs.resolve(top.stdout.replace(/\r?\n$/, ''), { cwd: git.cwd, signal: git.signal })
-    const root = this.ctx.fs.processPath(target)
-    const head = await git.git(root, ['rev-parse', '--verify', '-q', 'HEAD^{commit}'], [0, 1])
-    if (head.exitCode !== 0) return { reason: `${root} has no commits` }
-    return { root, head: head.stdout.trim() }
-  }
-
-  private async resolveBase(git: GitContext, root: string, head: string): Promise<{ commit: string; label: string }> {
-    if (this.config.baseRef === 'head') return { commit: head, label: 'HEAD' }
-    const symbolic = await git.git(root, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD'], [0, 1])
-    const remote = symbolic.stdout.trim()
-    if (remote.length > 0) {
-      const commit = await git.git(root, ['rev-parse', '--verify', '-q', '--end-of-options', `${remote}^{commit}`], [0, 1])
-      if (commit.exitCode === 0) return { commit: commit.stdout.trim(), label: remote.replace(/^refs\/remotes\//, '') }
-    }
-    return { commit: head, label: 'HEAD (no origin/HEAD)' }
-  }
-
-  private async writeLease(git: GitContext, path: string, file: LeaseFile): Promise<void> {
-    const adminDir = await this.adminDirectory(git, path)
-    await git.node(path, WRITE_FILE, join(adminDir, LEASE_FILE), JSON.stringify(file))
-  }
-
-  private async adminDirectory(git: GitContext, path: string): Promise<string> {
-    return (await git.git(path, ['rev-parse', '--absolute-git-dir'])).stdout.trim()
-  }
-
-  private async readLease(git: GitContext, path: string, branch: string): Promise<{ adminDir: string; file: LeaseFile | undefined }> {
-    const adminDir = await this.adminDirectory(git, path)
-    const location = join(adminDir, LEASE_FILE)
-    if (await this.ctx.fs.lstat(location, undefined, git.signal) === undefined) return { adminDir, file: undefined }
-    const parsed = parseLeaseFile(await this.ctx.fs.readText(await this.ctx.fs.resolve(location, { signal: git.signal }), git.signal))
-    return { adminDir, file: parsed?.branch === branch ? parsed : undefined }
-  }
-
-  private async inspectLeases(git: GitContext, root: string): Promise<{
-    leases: Array<{ path: string; branch: string; status: LeaseStatus; file: LeaseFile | undefined; adminDir: string | undefined }>
-    orphans: Array<{ branch: string; tip: string }>
-  }> {
-    const listing = await git.git(root, ['worktree', 'list', '--porcelain', '-z'])
-    const leases = []
-    const attached = new Set<string>()
-    for (const entry of parseWorktreeList(listing.stdout)) {
-      if (entry.branch === undefined || !isLeaseBranch(entry.branch)) continue
-      attached.add(entry.branch)
-      if (await this.ctx.fs.lstat(entry.path, undefined, git.signal) === undefined) {
-        leases.push({ path: entry.path, branch: entry.branch, status: 'missing' as const, file: undefined, adminDir: undefined })
-        continue
-      }
-      const { adminDir, file } = await this.readLease(git, entry.path, entry.branch).catch(
-        () => ({ adminDir: undefined, file: undefined }),
-      )
-      const alive = file !== undefined && file.state !== 'kept' && file.ownerHost === HOST
-        && await ownerAlive(file.ownerPid, file.ownerStart)
-      leases.push({ path: entry.path, branch: entry.branch, status: classify(file, HOST, alive), file, adminDir })
-    }
-    const refs = await git.git(root, ['for-each-ref', '--format=%(refname) %(objectname)', `refs/heads/${LEASE_PREFIX}`])
-    const orphans = refs.stdout.split('\n')
-      .filter(line => line.length > 0)
-      .map((line) => {
-        const [ref = '', tip = ''] = line.split(' ')
-        return { branch: ref.replace(/^refs\/heads\//, ''), tip }
-      })
-      .filter(({ branch }) => !attached.has(branch))
-    return { leases, orphans }
-  }
-
-  private async inspect(git: GitContext, path: string, branch: string, env: NodeJS.ProcessEnv): Promise<Inspection> {
-    const status = await git.git(path, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], undefined, env)
-    const head = await git.git(path, ['rev-parse', '--verify', '-q', 'HEAD'], [0, 1])
-    const symbolic = await git.git(path, ['symbolic-ref', '-q', 'HEAD'], [0, 1])
-    const tip = await git.git(path, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`], [0, 1])
-    return {
-      dirty: status.stdout.length > 0,
-      head: head.stdout.trim(),
-      symbolicRef: symbolic.exitCode === 0 ? symbolic.stdout.trim() : undefined,
-      branchTip: tip.exitCode === 0 ? tip.stdout.trim() : undefined,
-    }
-  }
-
-  /**
-   * Remove a clean lease or keep a changed one. Removal never forces: Git itself refuses when files
-   * appeared after inspection, and that refusal keeps the checkout. The branch is deleted only while it
-   * still points at the base commit, so a branch that advanced is never lost. Repeating a settled lease is a no-op.
-   */
-  private async settle(git: GitContext, root: string, lease: LeaseRef): Promise<Settlement> {
-    const { path, branch } = lease
-    const baseCommit = lease.file.baseCommit
-    const env = await this.filterOverrides(git, path)
-    const inspection = await this.inspect(git, path, branch, env)
-    const decision = decide(inspection, { branch, baseCommit })
-    if (decision.action === 'keep') return this.keep(git, lease, inspection, decision.reason)
-    await this.persist(git, lease, 'settling')
-    const removal = await git.git(root, ['worktree', 'remove', '--', path], [0, 1, 128], env)
-    if (removal.exitCode !== 0 && await this.ctx.fs.lstat(path, undefined, git.signal) !== undefined) {
-      const after = await this.inspect(git, path, branch, env)
-      const changed = decide(after, { branch, baseCommit }).action === 'keep'
-      return this.keep(git, lease, after, changed ? 'changed-during-removal' : 'removal-refused')
-    }
-    await this.deleteBranch(git, root, branch, baseCommit)
-    return { kind: 'removed', branch }
-  }
-
-  private async keep(git: GitContext, lease: LeaseRef, inspection: Inspection, reason: KeptReason): Promise<Settlement> {
-    await this.persist(git, lease, 'kept')
-    return {
-      kind: 'kept', path: lease.path, branch: lease.branch, baseCommit: lease.file.baseCommit,
-      headCommit: inspection.head, uncommitted: inspection.dirty, reason,
-    }
-  }
-
-  private async persist(git: GitContext, lease: LeaseRef, state: LeaseFile['state']): Promise<void> {
-    await git.node(lease.path, WRITE_FILE, join(lease.adminDir, LEASE_FILE), JSON.stringify({ ...lease.file, state }))
-  }
-
-  /** Compare-and-delete: Git deletes the ref only while it still has the expected value. */
-  private async deleteBranch(git: GitContext, root: string, branch: string, expected: string): Promise<void> {
-    await git.git(root, ['update-ref', '-d', `refs/heads/${branch}`, expected], [0, 1, 128])
-  }
-
-  /** Settle a lease this process owns once its delegate stopped. Failures are logged and left for the reaper. */
-  private async finish(
-    policy: SandboxExecutionPolicy,
-    root: string,
-    path: string,
-    branch: string,
-    onKept: (report: KeptReport) => void,
-  ): Promise<Settlement | undefined> {
-    try {
-      const git = this.bind(policy, root, new AbortController().signal)
-      const { adminDir, file } = await this.readLease(git, path, branch)
-      if (file === undefined) throw new Error('lease metadata is missing')
-      const settlement = await this.settle(git, root, { path, branch, adminDir, file })
-      if (settlement.kind === 'kept') this.deliver(onKept, settlement)
-      return settlement
-    } catch (error) {
-      this.ctx.logger.warn(`worktree lease ${branch} at ${path} was not settled; a later sweep will retry after this process exits: ${String(error)}`)
-      return undefined
-    }
-  }
-
-  private deliver(onKept: (report: KeptReport) => void, settlement: Settlement & { kind: 'kept' }): void {
-    const { kind: _kind, ...report } = settlement
-    try {
-      onKept(report)
-    } catch (error) {
-      this.ctx.logger.warn(`worktree kept report for ${report.path} was not delivered: ${String(error)}`)
-    }
-  }
-
-  /** Roll back a lease whose delegate never started; a failure leaves it for the reaper. */
-  private async abandon(git: GitContext, root: string, path: string, branch: string): Promise<void> {
-    try {
-      const own = this.bind(git.policy, root, new AbortController().signal)
-      const { adminDir, file } = await this.readLease(own, path, branch)
-      if (file === undefined) return
-      if (file.state === 'provisioning') await this.completeCheckout(own, { path, branch, adminDir, file })
-      await this.settle(own, root, { path, branch, adminDir, file })
-    } catch (error) {
-      this.ctx.logger.warn(`worktree lease ${branch} at ${path} could not be rolled back: ${String(error)}`)
-    }
-  }
-
-  /** Finish the checkout of a lease that crashed while provisioning. No delegate ever ran in it. */
-  private async completeCheckout(git: GitContext, lease: LeaseRef): Promise<void> {
-    const env = await this.filterOverrides(git, lease.path)
-    await git.git(lease.path, ['--work-tree', lease.path, 'reset', '--hard', '--no-recurse-submodules', lease.file.baseCommit], undefined, env)
-  }
-
-  private async sweep(git: GitContext, root: string): Promise<Array<{ settlement: Settlement; ownerSession: string | undefined }>> {
-    return this.exclusive(async () => {
-      const bound = this.bind(git.policy, root, git.signal)
-      const found = await this.inspectLeases(bound, root)
-      const settled: Array<{ settlement: Settlement; ownerSession: string | undefined }> = []
-      for (const lease of found.leases) {
-        const action = reapAction(lease.status, lease.file?.state)
-        if (action === 'skip' || lease.file === undefined || lease.adminDir === undefined) continue
-        const ref = { path: lease.path, branch: lease.branch, adminDir: lease.adminDir, file: lease.file }
-        try {
-          if (action === 'replay-provisioning') await this.completeCheckout(bound, ref)
-          settled.push({ settlement: await this.settle(bound, root, ref), ownerSession: lease.file.ownerSession })
-        } catch (error) {
-          this.ctx.logger.warn(`worktree lease ${lease.branch} at ${lease.path} was not settled by the sweep: ${String(error)}`)
-        }
-      }
-      for (const { branch, tip } of found.orphans) {
-        if (await this.sweepOrphan(bound, root, branch, tip)) settled.push({ settlement: { kind: 'removed', branch }, ownerSession: undefined })
-      }
-      return settled
-    })
-  }
-
-  /** Delete a lease branch without a worktree only if its reflog proves it never left its creation commit. */
-  private async sweepOrphan(git: GitContext, root: string, branch: string, tip: string): Promise<boolean> {
-    const log = await git.git(root, ['reflog', 'show', '--format=%H %gs', `refs/heads/${branch}`], [0, 128])
-    const oldest = log.stdout.split('\n').filter(line => line.length > 0).at(-1)
-    const [commit, ...subject] = oldest?.split(' ') ?? []
-    const created = subject.join(' ').startsWith('branch: Created from') ? commit : undefined
-    if (decideOrphan(tip, created) === 'keep') return false
-    await this.deleteBranch(git, root, branch, tip)
-    return true
-  }
-
-  private async reapForSession(git: GitContext, root: string, session: string, onKept: (report: KeptReport) => void): Promise<void> {
-    try {
-      for (const { settlement, ownerSession } of await this.sweep(git, root)) {
-        if (settlement.kind === 'kept' && ownerSession === session) this.deliver(onKept, settlement)
-      }
-    } catch (error) {
-      this.ctx.logger.warn(`worktree sweep failed; provisioning continues: ${String(error)}`)
-    }
-  }
-}
-
-function incomplete(branch: string, path: string, error: unknown): Error {
-  return new Error(`Could not finish worktree ${branch} at ${path}. Any created checkout and branch are retained. ${error instanceof Error ? error.message : String(error)}`, { cause: error })
 }
 
 export default WorktreeService

@@ -33,7 +33,7 @@ export interface KeptReport {
   baseCommit: string
   /** Commit the checkout's HEAD pointed at when it was settled. */
   headCommit: string
-  /** Whether tracked changes or non-ignored untracked files were present. */
+  /** Whether tracked changes, untracked files, or ignored files other than `node_modules` were present. */
   uncommitted: boolean
   /** The observation that prevented removal. */
   reason: KeptReason
@@ -62,12 +62,22 @@ export type Isolation =
     reason: string
   }
 
+/** Result of starting a delegate in a lease. */
+export interface Isolated<T extends IsolatedActivation> {
+  /** The value returned by the caller's start function. */
+  activation: T
+  isolation: Isolation
+  /** Resolves after settlement and kept-report delivery; never rejects. Undefined when settlement failed. */
+  settled: Promise<Settlement | undefined>
+}
+
 /** Lease liveness as seen from this host. */
 export type LeaseStatus = 'live' | 'dead' | 'foreign' | 'kept' | 'unowned' | 'missing'
 
 /** One lease worktree as listed to humans and the reaper. */
 export interface LeaseSummary {
-  path: string
+  /** Checkout directory; absent for a lease branch whose worktree is gone. */
+  path?: string
   branch: string
   status: LeaseStatus
   /** Owning Session id; absent when the metadata file is missing. */
@@ -79,6 +89,4 @@ export interface LeaseSummary {
 export interface IsolatedActivation {
   /** Settles when the child has stopped writing. Rejection also settles the lease. */
   readonly result: Promise<unknown>
-  /** Stops the child; called when settlement bookkeeping fails to start. */
-  dispose(): Promise<void>
 }

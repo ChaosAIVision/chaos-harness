@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classify, decide, decideOrphan, formatKept, isLeaseBranch, parseLeaseFile, parseWorktreeList, reapAction } from '../src/lease.ts'
+import { classify, decide, decideOrphan, formatKept, isLeaseBranch, isReservedName, parseLeaseFile, parseStatus, parseWorktreeList, reapAction, stashedFrom } from '../src/lease.ts'
 import type { Inspection, LeaseFile } from '../src/lease.ts'
 
 const file: LeaseFile = {
@@ -41,11 +41,13 @@ describe('reapAction', () => {
 
 describe('decide', () => {
   const base = 'b'.repeat(40)
-  const clean: Inspection = { dirty: false, head: base, symbolicRef: 'refs/heads/dsh/lease/a', branchTip: base }
+  const clean: Inspection = { dirty: false, ignored: false, stashed: false, head: base, symbolicRef: 'refs/heads/dsh/lease/a', branchTip: base }
   const lease = { branch: 'dsh/lease/a', baseCommit: base }
   it.each([
     ['clean at base', clean, 'remove'],
     ['dirty', { ...clean, dirty: true }, 'keep'],
+    ['ignored files', { ...clean, ignored: true }, 'keep'],
+    ['stash entry', { ...clean, stashed: true }, 'keep'],
     ['new commit', { ...clean, head: 'c'.repeat(40), branchTip: 'c'.repeat(40) }, 'keep'],
     ['detached HEAD', { ...clean, symbolicRef: undefined }, 'keep'],
     ['switched branch', { ...clean, symbolicRef: 'refs/heads/other' }, 'keep'],
@@ -71,6 +73,7 @@ describe('parseLeaseFile', () => {
   it('round-trips a valid record', () => {
     expect(parseLeaseFile(JSON.stringify(file))).toEqual(file)
     expect(parseLeaseFile(JSON.stringify({ ...file, ownerStart: null }))?.ownerStart).toBeNull()
+    expect(parseLeaseFile(JSON.stringify({ ...file, baseCommit: 'a'.repeat(64) }))?.baseCommit).toBe('a'.repeat(64))
   })
   it.each([
     ['not json', '{'],
@@ -80,6 +83,15 @@ describe('parseLeaseFile', () => {
     ['non-string state', JSON.stringify({ ...file, state: 1 })],
     ['missing branch', JSON.stringify({ ...file, branch: undefined })],
     ['bad base', JSON.stringify({ ...file, baseCommit: 3 })],
+    ['option-shaped base', JSON.stringify({ ...file, baseCommit: '--hard' })],
+    ['abbreviated base', JSON.stringify({ ...file, baseCommit: 'abc1234' })],
+    ['symbolic base', JSON.stringify({ ...file, baseCommit: 'HEAD' })],
+    ['uppercase base', JSON.stringify({ ...file, baseCommit: 'B'.repeat(40) })],
+    ['branch outside the lease namespace', JSON.stringify({ ...file, branch: 'main' })],
+    ['option-shaped branch', JSON.stringify({ ...file, branch: '--force' })],
+    ['branch with a traversal segment', JSON.stringify({ ...file, branch: 'dsh/lease/../main' })],
+    ['branch with a space', JSON.stringify({ ...file, branch: 'dsh/lease/a b' })],
+    ['bare namespace', JSON.stringify({ ...file, branch: 'dsh/lease/' })],
     ['bad pid', JSON.stringify({ ...file, ownerPid: 1.5 })],
     ['bad time', JSON.stringify({ ...file, createdAtMs: 'x' })],
     ['bad start', JSON.stringify({ ...file, ownerStart: 4 })],
@@ -89,16 +101,16 @@ describe('parseLeaseFile', () => {
 })
 
 describe('parseWorktreeList', () => {
-  it('reads paths, branches, and prunable markers from NUL-delimited records', () => {
+  it('reads paths and branches from NUL-delimited records', () => {
     const output = [
       'worktree /repo', 'HEAD aaa', 'branch refs/heads/main', '',
-      'worktree /repo/.agents/worktrees/dsh/lease/x y', 'HEAD bbb', 'branch refs/heads/dsh/lease/x', 'prunable gitdir file points to non-existent location', '',
+      'worktree /repo/.agents/worktrees/dsh/lease/x y', 'HEAD bbb', 'branch refs/heads/dsh/lease/x', '',
       'worktree /detached', 'HEAD ccc', 'detached', '', '',
     ].join('\0')
     expect(parseWorktreeList(output)).toEqual([
-      { path: '/repo', branch: 'main', prunable: false },
-      { path: '/repo/.agents/worktrees/dsh/lease/x y', branch: 'dsh/lease/x', prunable: true },
-      { path: '/detached', branch: undefined, prunable: false },
+      { path: '/repo', branch: 'main' },
+      { path: '/repo/.agents/worktrees/dsh/lease/x y', branch: 'dsh/lease/x' },
+      { path: '/detached', branch: undefined },
     ])
     expect(parseWorktreeList('')).toEqual([])
   })
@@ -115,4 +127,36 @@ it('formats a kept report with abbreviated commits', () => {
     path: '/r/.agents/worktrees/dsh/lease/a', branch: 'dsh/lease/a', baseCommit: '1234567890', headCommit: 'abcdefabcdef',
     uncommitted: true, reason: 'changed',
   })).toBe('Worktree kept (changed): path=/r/.agents/worktrees/dsh/lease/a branch=dsh/lease/a base=1234567 head=abcdefa uncommitted=true')
+})
+
+describe('parseStatus', () => {
+  it.each([
+    ['empty', '', { dirty: false, ignored: false }],
+    ['untracked', '?? a.txt\0', { dirty: true, ignored: false }],
+    ['ignored secret', '!! .env\0', { dirty: false, ignored: true }],
+    ['root node_modules', '!! node_modules/\0', { dirty: false, ignored: false }],
+    ['nested node_modules', '!! sub/node_modules/\0', { dirty: false, ignored: false }],
+    ['look-alike directory', '!! node_modules_old/\0', { dirty: false, ignored: true }],
+    ['both', '!! node_modules/\0!! .env\0 M tracked.txt\0', { dirty: true, ignored: true }],
+  ] as const)('%s', (_name, output, expected) => {
+    expect(parseStatus(output)).toEqual(expected)
+  })
+})
+
+describe('stashedFrom', () => {
+  it('matches only entries made on the lease branch', () => {
+    const subjects = 'WIP on main: abc subject\nOn dsh/lease/a: named\nWIP on dsh/lease/ab: x'
+    expect(stashedFrom(subjects, 'dsh/lease/a')).toBe(true)
+    expect(stashedFrom('WIP on dsh/lease/ab: x', 'dsh/lease/a')).toBe(false)
+    expect(stashedFrom('', 'dsh/lease/a')).toBe(false)
+  })
+})
+
+describe('isReservedName', () => {
+  it.each([
+    ['dsh', true], ['dsh/lease', true], ['dsh/lease/x', true], ['dsh/lease/x/y', true],
+    ['dsh/other', false], ['dsh-lease', false], ['dsh/leases', false], ['topic', false],
+  ] as const)('%s -> %s', (name, expected) => {
+    expect(isReservedName(name)).toBe(expected)
+  })
 })
