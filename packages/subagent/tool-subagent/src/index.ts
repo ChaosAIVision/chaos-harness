@@ -38,6 +38,9 @@ import {
 /** Shared child route authorization and preflight for delegation tools. */
 export { assertAllowedModelSelection, preflightChildLlmRoute } from './model-selection.ts'
 export type { ModelSelectionPolicy } from './model-selection.ts'
+/** Proof of a person's route confirmation, required by persisted authorization and Session widening. */
+export { mintHumanApproval } from './human-approval.ts'
+export type { HumanApproval } from './human-approval.ts'
 /** Shared durable Session route policy readers for delegation tools. */
 export { sessionPolicy, subagentModelSelectionProjectionDefinition, subagentModelSelectionPolicy } from './model-selection-state.ts'
 export type { PolicyOrigin, SessionRoutePolicy } from './model-selection-state.ts'

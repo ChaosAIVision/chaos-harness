@@ -1,7 +1,7 @@
 /** Replay rules of the widening model-selection policy log. */
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { Session, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
+import { Session, SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import type { AllowedModelRoute } from '../src/model-selection.ts'
 import {
@@ -107,7 +107,7 @@ describe('model-selection policy projection', () => {
 
     it('refolds the full log when the checkpoint row predates stateVersion 2', async () => {
       const { ctx, session } = await widenedSession()
-      const v1Row = { subagentModelSelectionPolicy: { ver: 1, seq: 0, val: [A] } }
+      const v1Row = { subagentModelSelectionPolicy: { ver: 1, seq: SessionSeq(0), val: [A] } }
       const restored = ctx.sessionProjections.restore(
         v1Row, session.snapshotEvents(), SessionLogOffset(0), session.header, session.inheritedEventCount,
       )
@@ -119,7 +119,7 @@ describe('model-selection policy projection', () => {
     it('refuses a partial tail over a version-1 row instead of serving it', async () => {
       const { ctx, session } = await widenedSession()
       expect(() => ctx.sessionProjections.restore(
-        { subagentModelSelectionPolicy: { ver: 1, seq: 0, val: [A] } },
+        { subagentModelSelectionPolicy: { ver: 1, seq: SessionSeq(0), val: [A] } },
         session.snapshotEvents().slice(1), SessionLogOffset(1), session.header, session.inheritedEventCount,
       )).toThrow('re-read from seq 0')
     })
