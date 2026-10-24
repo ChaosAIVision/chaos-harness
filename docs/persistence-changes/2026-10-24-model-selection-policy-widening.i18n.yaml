@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-24-model-selection-policy-widening.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-24-model-selection-policy-widening.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-24-model-selection-policy-widening:
+  en: 8ddbfc2de8ac2b17
+  zh: f0c1ce1bc821205e
+/2026-10-24-model-selection-policy-widening/summary:
+  en: be0171ada3acc619
+  zh: b2d8594402cee2a3
+/2026-10-24-model-selection-policy-widening/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-24-model-selection-policy-widening/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-24-model-selection-policy-widening/compatibility:
+  en: 5b9bcb177d6ea267
+  zh: 44a13fad2d6671b3
+/2026-10-24-model-selection-policy-widening/verification:
+  en: 242f7ead909ba4d1
+  zh: cb39f0209e7fae2e
+/2026-10-24-model-selection-policy-widening/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269
