@@ -72,8 +72,10 @@ describe('terminal conversation views', () => {
       await expect.poll(() => terminal.text()).toContain('Select a model')
       expect(await terminal.text()).not.toMatch(/¤|Conversation title|Retained draft|Connected/)
       for (const size of [{ columns: 48, rows: 14 }, { columns: 100, rows: 32 }]) {
+        const previousOutput = terminal.output.length
         terminal.size(size.columns, size.rows)
-        await expect.poll(() => terminal.text()).toContain('Model B')
+        await expect.poll(() => terminal.output.length).toBeGreaterThan(previousOutput)
+        expect(await terminal.text()).toContain('Model B')
         expect(await terminal.text()).not.toMatch(/¤|Conversation title|Retained draft|Connected/)
       }
       terminal.input('\u001b')

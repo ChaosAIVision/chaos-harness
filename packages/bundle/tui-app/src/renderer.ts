@@ -36,7 +36,12 @@ type Focus =
 
 class Panel extends Container implements Focusable {
   focused = true
-  constructor(private readonly input: (data: string) => void) { super() }
+  constructor(private readonly terminal: Terminal, private readonly input: (data: string) => void) { super() }
+  override render(width: number): string[] {
+    const padding = width > 2 ? ' ' : ''
+    const lines = ['', ...super.render(Math.max(1, width - padding.length * 2))]
+    return Array.from({ length: this.terminal.rows }, (_, row) => truncateToWidth(`${padding}${lines[row] ?? ''}`, width))
+  }
   handleInput(data: string): void { this.input(data) }
 }
 
@@ -169,7 +174,8 @@ export class TerminalRenderer implements Component {
   /** @param width - available terminal columns. @returns the current visible terminal frame. */
   render(width: number): string[] {
     const content = this.rows.flatMap((row) => {
-      const folded = row.kind === 'context' || row.kind === 'tool' && !this.toolsExpanded || row.kind === 'reasoning' && !this.reasoningExpanded
+      if (row.kind === 'context') return []
+      const folded = row.kind === 'tool' && !this.toolsExpanded || row.kind === 'reasoning' && !this.reasoningExpanded
       const title = terminalText(`${row.title}${folded ? ` · ${t.folded}` : ''}`)
       const text = terminalText(row.text)
       return [row.kind === 'user' ? accent(title) : bold(title),
@@ -253,7 +259,7 @@ export class TerminalRenderer implements Component {
   private panel<T>(component: Component, signal: AbortSignal, completion: PromiseWithResolvers<T | undefined>): Promise<T | undefined> {
     if (signal.aborted) return Promise.resolve(undefined)
     const cancel = (): void => { completion.resolve(undefined) }
-    const handle = this.tui.showOverlay(component, { width: '90%', maxHeight: '85%', anchor: 'center' })
+    const handle = this.tui.showOverlay(component, { width: '100%', maxHeight: '100%', anchor: 'top-left' })
     this.focus = { kind: 'panel', component, cancel }
     signal.addEventListener('abort', cancel, { once: true })
     return completion.promise.finally(() => {
@@ -273,7 +279,7 @@ export class TerminalRenderer implements Component {
     const filter = new Input()
     list.onSelect = (item) => { completion.resolve(choices[Number(item.value)]?.value) }
     list.onCancel = () => { completion.resolve(undefined) }
-    const panel = new Panel((data) => {
+    const panel = new Panel(this.terminal, (data) => {
       if (matchesKey(data, 'escape') || matchesKey(data, 'enter') || matchesKey(data, 'up') || matchesKey(data, 'down')) list.handleInput(data)
       else { filter.handleInput(data); list.setFilter(filter.getValue()) }
       this.tui.requestRender()
@@ -294,7 +300,7 @@ export class TerminalRenderer implements Component {
     input.setValue(terminalText(options?.initial ?? ''))
     input.onSubmit = (value) => { completion.resolve(value) }
     input.onEscape = () => { completion.resolve(undefined) }
-    const panel = new Panel((data) => { input.handleInput(data); this.tui.requestRender() })
+    const panel = new Panel(this.terminal, (data) => { input.handleInput(data); this.tui.requestRender() })
     panel.addChild(new Text(bold(terminalText(title))))
     panel.addChild(options?.secret === true ? {
       render: width => [`${'•'.repeat(Math.min(width - 1, [...input.getValue()].length))}${CURSOR_MARKER}`],
@@ -309,7 +315,7 @@ export class TerminalRenderer implements Component {
     const markdown = new Markdown(terminalText(text), 1, 0, markdownTheme)
     let offset = 0
     const height = Math.max(1, this.terminal.rows - 8)
-    const panel = new Panel((data) => {
+    const panel = new Panel(this.terminal, (data) => {
       if (matchesKey(data, 'escape') || matchesKey(data, 'enter')) completion.resolve()
       if (matchesKey(data, 'up')) offset = Math.max(0, offset - 1)
       if (matchesKey(data, 'down')) offset += 1
