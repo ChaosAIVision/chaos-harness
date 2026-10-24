@@ -5,6 +5,7 @@ import type { KeptReason, KeptReport, LeaseStatus } from './types.ts'
 /** Branch namespace reserved for delegate leases. Only the lease code creates or deletes refs here. */
 export const LEASE_PREFIX = 'dsh/lease/'
 
+/** Durable lifecycle markers used to recover interrupted lease operations. */
 export type LeaseState = 'provisioning' | 'held' | 'settling' | 'kept'
 
 /** Contents of `<git admin dir>/dsh-lease.json`, which Git deletes together with the worktree. */
@@ -72,6 +73,7 @@ export function classify(file: LeaseFile | undefined, host: string, ownerAlive: 
   return ownerAlive ? 'live' : 'dead'
 }
 
+/** Sweep action selected from lease ownership and recorded lifecycle state. */
 export type ReapAction = 'skip' | 'replay-provisioning' | 'settle'
 
 /**
@@ -100,6 +102,7 @@ export interface Inspection {
   branchTip: string | undefined
 }
 
+/** Whether inspected checkout contents permit removal or require retention. */
 export type SettleDecision = { action: 'remove' } | { action: 'keep'; reason: KeptReason }
 
 /**
@@ -122,6 +125,7 @@ export function parseStatus(output: string): { dirty: boolean; ignored: boolean 
  * Whether the shared stash reflog holds an entry made from a lease checkout.
  * @param subjects - reflog subjects of `refs/stash`, one per line.
  * @param branch - lease branch the checkout had checked out.
+ * @returns true when a stash subject names the lease branch.
  */
 export function stashedFrom(subjects: string, branch: string): boolean {
   return subjects.split('\n').some(line => line.startsWith(`WIP on ${branch}:`) || line.startsWith(`On ${branch}:`))
@@ -191,6 +195,7 @@ export function isLeaseBranch(branch: string): boolean {
  * Whether a requested branch name collides with the lease namespace. `dsh` and `dsh/lease` are reserved too:
  * as branch names they would block every `dsh/lease/<id>` ref by a file-versus-directory conflict.
  * @param name - requested branch name.
+ * @returns true when the name occupies or blocks the lease namespace.
  */
 export function isReservedName(name: string): boolean {
   return name === 'dsh' || name === 'dsh/lease' || isLeaseBranch(name)
