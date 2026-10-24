@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { apply } from '../src/client/index.ts'
+import { apply, installFileUpload } from '../src/client/index.ts'
 import { fileUploadWorker, FileUploadRuntime } from '../src/client/runtime.ts'
 import type { FileUploadBody } from '../src/client/contract.ts'
 import type { ClientFileUploadHooks } from '../src/types.ts'
@@ -212,6 +212,29 @@ describe('file upload worker body', () => {
 })
 
 describe('file upload service', () => {
+  it('keeps authenticated carriers separate for non-page Clients', async () => {
+    const pageFetch = vi.fn(() => Promise.resolve(new Response('page')))
+    ;(globalThis as UploadGlobal).__DSH_FILE_UPLOAD__ = { fetch: pageFetch }
+    const firstFetch = vi.fn(() => Promise.resolve(new Response('first')))
+    const secondFetch = vi.fn(() => Promise.resolve(new Response('second')))
+    const first = new Context()
+    const second = new Context()
+    const fibers = [installFileUpload(first, { fetch: firstFetch }), installFileUpload(second, { fetch: secondFetch })]
+    try {
+      await Promise.all(fibers)
+      const body = new Blob(['upload'])
+      await expect((first.fileUpload as FileUploadRuntime).post({ path: 'first', body }))
+        .resolves.toEqual({ status: 200, body: 'first' })
+      await expect((second.fileUpload as FileUploadRuntime).post({ path: 'second', body }))
+        .resolves.toEqual({ status: 200, body: 'second' })
+      expect(firstFetch).toHaveBeenCalledOnce()
+      expect(secondFetch).toHaveBeenCalledOnce()
+      expect(pageFetch).not.toHaveBeenCalled()
+    } finally {
+      await Promise.all(fibers.map(fiber => fiber.dispose()))
+    }
+  })
+
   it('uses a page-owned Host fetch for Blob and ReadableStream bodies', async () => {
     const fetch = vi.fn((_url: string | URL, _init?: RequestInit) =>
       Promise.resolve(new Response('accepted', { status: 202 })))
