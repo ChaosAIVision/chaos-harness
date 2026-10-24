@@ -138,7 +138,9 @@ models:
 
 `readonly: true` 向子 agent 传递 `toolFilter: { deny: ['edit', 'write'] }`，并要求它不修改文件或外部状态，包括不通过 shell 命令修改。直接 `edit` 和 `write` 会从可用工具中移除。Bash 仍然可用：这不是只读文件系统或 shell 沙箱，不能阻止所有可能的修改。Spawn 和 fork 支持该过滤器，包括冷恢复后；没有 `toolFilter` 能力的 provider 会拒绝请求。
 
-传入 `cwd` 可选择子 agent 的工作目录；省略时使用父级目录。Compat 没有 `isolation: worktree` 选项。派发前手工创建 worktree，将其绝对路径作为 `cwd`，并单独管理审查、合并与清理。新建子 agent 或更改 `cwd` 都不会自动建立文件系统隔离。
+传入 `cwd` 可选择子 agent 的工作目录；省略时使用父级目录。在 compat 之前挂载实验性 [worktree 服务](../../experimental/worktree/README.zh.md) 后，`claude_agent` 还接受 `isolation: worktree`。服务相对于父级目录解析 `cwd`，创建独立检出目录，并仅在该目录启动子 agent。父级目录保持不变。服务的 `baseRef` 选择基线，默认使用本地远程默认分支，不执行 fetch；回退到 HEAD 时会明确报告。
+
+子 agent 停止后，干净的检出目录及其分支会被删除。有改动的检出目录会保留；子 agent 答案之后，单独的 `worktree-kept` 消息报告路径、分支、提交和未提交状态。在 Git 之外或仓库尚无提交时，子 agent 在选定目录运行，初始工具结果会明确报告隔离降级。未挂载服务时，schema 省略 `isolation`，执行器也会拒绝该参数。仅设置 `cwd` 不会创建 worktree。保留目录的审查、合并、依赖安装和删除仍需手工执行。
 
 ### 后台结果与控制
 

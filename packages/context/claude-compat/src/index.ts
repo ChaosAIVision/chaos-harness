@@ -22,7 +22,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type { WorktreeService } from '@deepseek-ai/dsh-experimental-worktree'
 import type { ContentBlock, LlmRuntime } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent'
@@ -44,6 +45,13 @@ import { assertSetupUpdate, loadPstackPreferences, savePstackPreferences } from 
 import { contextMessage, loadRoleSheet, renderRoleSheet } from './role-sheet.ts'
 import type { RoleChoices, RoleSheet } from './role-sheet.ts'
 export { loadPstackPreferences, parsePstackPreferences, pstackConfigPath, savePstackPreferences } from './pstack-config.ts'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    /** Runtime report of a delegate checkout retained for review. */
+    'worktree-kept': { kind: 'worktree-kept' }
+  }
+}
 
 export const name = 'experimental-claude-compat'
 
@@ -115,7 +123,21 @@ export interface CompatHost {
   /** Register one model-facing tool and return its disposer. */
   readonly registerTool: (tool: ToolDefinition) => () => void
   /** Start one child execution. */
-  readonly startActivation: (spec: SubagentActivationSpec) => Promise<{ childId: string }>
+  readonly startActivation: (spec: SubagentActivationSpec) => Promise<{ childId: string; result: Promise<unknown> }>
+  /**
+   * Optional worktree capability. Absence hides and rejects isolation; the adapter owns kept notices.
+   * @param parent - caller whose directory and file policy select the source repository.
+   * @param cwd - source directory relative to the parent; omission uses the parent directory.
+   * @param start - dispatch the child in the service-selected directory.
+   * @param signal - cancellation of provisioning, not settlement.
+   * @returns activation and model-visible isolation or degradation description.
+   */
+  readonly isolateWorktree?: (
+    parent: Agent,
+    cwd: string | undefined,
+    start: (cwd: string) => ReturnType<CompatHost['startActivation']>,
+    signal: AbortSignal,
+  ) => Promise<{ activation: Awaited<ReturnType<CompatHost['startActivation']>>; description: string }>
   /** LLM catalog, when the host mounts one. */
   readonly llm: (Pick<LlmRuntime, 'resolveCallConfig' | 'resolveModelInfo'> & Partial<Pick<LlmRuntime, 'listProviders' | 'listModels'>>) | undefined
   /** Recorded Session authorization; omission restricts explicit selection to the parent route. */
@@ -312,7 +334,10 @@ export function install(host: CompatHost, config: Config): void {
       reasoning_effort: { type: 'string', description: 'Model-specific effort, including when inheriting the parent model.' },
       description: { type: 'string', required: true, description: 'Short 3-5 word task label shown in the child catalog.' },
       prompt: { type: 'string', required: true, description: 'The task the child must complete. Self-contained.' },
-      cwd: { type: 'string', description: 'Optional child working directory; defaults to the parent directory.' },
+      cwd: { type: 'string', description: 'Optional child working directory; defaults to the parent directory. With isolation, selects the source directory for the worktree service.' },
+      ...host.isolateWorktree === undefined ? {} : {
+        isolation: { type: 'string' as const, enum: ['worktree'], description: 'Run in a private Git worktree. Clean checkouts are removed after completion; changed checkouts are kept and reported. Outside Git, runs without isolation and reports why.' },
+      },
       model: { type: 'string', description: 'Configured model alias, auto, or inherit-parent; with provider, a raw model id.' },
       ...config.modelSelection ? {
         provider: { type: 'string' as const, description: 'LLM provider id configured in the profile.' },
@@ -325,6 +350,9 @@ export function install(host: CompatHost, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(args, exec) {
+      if (args.isolation !== undefined && host.isolateWorktree === undefined) {
+        throw new Error('claude_agent worktree isolation requires the worktree service and isolation: worktree')
+      }
       const agent = byType.get(args.subagent_type ?? 'general-purpose')
       if (args.run_in_background === false) throw new Error('claude_agent starts asynchronously; run_in_background: false is unsupported; use native child status tools')
       if (agent === undefined) {
@@ -397,21 +425,25 @@ export function install(host: CompatHost, config: Config): void {
         '',
         args.prompt,
       ].join('\n')
-      const started = await host.startActivation({
+      const start = (cwd: string | undefined) => host.startActivation({
         provider: config.provider,
         label: args.description,
         request: {
           prompt: [{ type: 'text', text: prompt }] as ContentBlock[],
           parent,
-          ...args.cwd === undefined ? {} : { cwd: args.cwd },
+          ...cwd === undefined ? {} : { cwd },
           ...args.readonly === true ? { toolFilter: { deny: ['edit', 'write'] } } : {},
           ...agentOptions === undefined ? {} : { agentOptions },
         },
         signal: exec.signal,
         delivery: 'parent',
       })
+      const isolated = args.isolation === 'worktree' && host.isolateWorktree !== undefined
+        ? await host.isolateWorktree(parent, args.cwd, cwd => start(cwd), exec.signal)
+        : undefined
+      const started = isolated?.activation ?? await start(args.cwd)
       const routeLabel = agentOptions?.provider === undefined ? 'parent route' : `${agentOptions.provider}/${agentOptions.model}`
-      return `Started ${agent.type} as subagent ${started.childId} on ${routeLabel}. Its result arrives as a message.`
+      return `Started ${agent.type} as subagent ${started.childId} on ${routeLabel}. Its result arrives as a message.${isolated === undefined ? '' : ` ${isolated.description}`}`
     },
   }))
 
@@ -594,7 +626,37 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     return answer?.selected.length === 1 && answer.selected[0] === 'Authorize routes' && answer.custom === undefined
       ? mintHumanApproval(routes) : undefined
   }
+  const worktrees: WorktreeService | undefined = ctx.get('worktrees')
+  const settlements = new Map<Agent, Set<Promise<unknown>>>()
+  ctx.on('agent/turn-stopping', async ({ agent }) => {
+    const pending = settlements.get(agent)
+    if (pending !== undefined) await Promise.all(pending)
+  })
   install({
+    ...worktrees === undefined ? {} : {
+      isolateWorktree: async (parent, cwd, start, signal) => {
+        const isolated = await worktrees.isolate(parent, cwd === undefined ? {} : { cwd }, start, (report) => {
+          parent.followup(createUserMessage({
+            content: [{ type: 'text', text: `Worktree kept (${report.reason}): path=${report.path} branch=${report.branch} base=${report.baseCommit} head=${report.headCommit} uncommitted=${report.uncommitted}` }],
+            source: { kind: 'worktree-kept' },
+          }))
+        }, signal)
+        const pending = settlements.get(parent) ?? new Set<Promise<unknown>>()
+        settlements.set(parent, pending)
+        pending.add(isolated.settled)
+        void isolated.settled.then(() => {
+          pending.delete(isolated.settled)
+          if (pending.size === 0) settlements.delete(parent)
+        })
+        const location = isolated.isolation
+        return {
+          activation: isolated.activation,
+          description: location.kind === 'worktree'
+            ? `Worktree isolation: cwd=${location.cwd} branch=${location.branch} base=${location.baseLabel} (${location.baseCommit}).`
+            : `Worktree isolation unavailable: ${location.reason}. Running in ${location.cwd}.`,
+        }
+      },
+    },
     modelSelectionPolicy: (parent) => {
       const current = sessionPolicy(policy, parent.session)
       return current === undefined ? undefined : { routes: current.routes, revision: current.revision }

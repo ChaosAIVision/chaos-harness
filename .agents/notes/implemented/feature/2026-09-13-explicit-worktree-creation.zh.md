@@ -10,6 +10,8 @@ Status: implemented
 
 ## Decision
 
+委派隔离决策由 [compat 委派 worktree 隔离](2026-10-24-compat-delegate-worktree-isolation.zh.md)部分取代；显式创建并进入操作保留下述行为。
+
 实验性[工作树运行时](../../../../packages/experimental/worktree/README.zh.md)从固定的本地提交创建新的具名分支与检出目录，然后通过共享工作目录服务进入其规范路径。[工具](../../../../packages/experimental/tool-worktree/README.zh.md)公开 `create_worktree({ name?, from? })`。这些包使用普通的显式组合，不添加额外运行时功能开关。
 
 源仓库由调用 Session 的当前目录决定。创建操作不会获取远端提交或复制未提交文件。默认父目录是当前检出目录顶层路径下的 `.agents/worktrees`，调用方位于链接检出目录中时也一样。创建该目录的进程写入忽略自身的 `.gitignore`；已有目录与忽略文件保持不变。名称必须对应新分支与尚未使用的检出路径。
