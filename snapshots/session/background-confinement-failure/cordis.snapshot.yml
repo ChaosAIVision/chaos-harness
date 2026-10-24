@@ -54,3 +54,7 @@
 - insert:
     - id: async-confinement-fixture
       name: '../../../packages/shell/bash-sandbox/tests/fixtures/async-confinement-failure.ts'
+
+# Reserve the refusing sandbox provider for the command under test.
+- id: claude-compat
+  disabled: true
