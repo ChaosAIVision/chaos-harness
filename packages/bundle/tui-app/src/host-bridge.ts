@@ -16,11 +16,6 @@ export const inject = ['connection', 'webServer', 'loader']
 export function apply(ctx: Context): void {
   if (process.send === undefined || !process.connected) throw new Error('tui host bridge requires parent IPC')
   const exit = ctx.get('appExit')
-  const disconnected = (): void => { exit?.(0) }
-  ctx.effect(() => {
-    process.once('disconnect', disconnected)
-    return () => { process.off('disconnect', disconnected) }
-  }, 'tui.host.parent')
   void ctx.loader.await().then(async () => {
     await auditStartupEntries(ctx.root, 'dsh tui host', () => {})
     if (!process.connected || ctx.get('connection') === undefined) return

@@ -9,7 +9,7 @@ import type { ConnectionWebSocket } from '@deepseek-ai/dsh-client-connection/cli
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose() })
 
-async function server() {
+async function server(admission: 'accept' | 'reject' | 'pending' = 'accept') {
   const admissions: string[] = []
   const calls: string[] = []
   const sockets: string[] = []
@@ -17,6 +17,8 @@ async function server() {
     const url = new URL(req.url ?? '/', 'http://fixture')
     if (url.pathname === '/mount/connect') {
       admissions.push(url.search)
+      if (admission === 'pending') return
+      if (admission === 'reject') { res.writeHead(401); res.end(); return }
       res.writeHead(302, { 'set-cookie': `dsh-auth-fixture=peer${admissions.length}; HttpOnly; Path=/`, location: './api/remote.mux' })
       res.end()
     } else {
@@ -89,6 +91,13 @@ describe('Node terminal transport', () => {
     await expect(transport.fetch('../outside', {})).rejects.toThrow('authenticated Host')
     expect(() => transport.createWebSocket('ws://127.0.0.1:1/mount/api')).toThrow('authenticated Host')
     expect(fixture.calls).toEqual([])
+  })
+
+  it('bounds a stalled exchange and reports rejection without credentials', async () => {
+    const pending = await server('pending')
+    await expect(createTerminalTransport(`${pending.base}?token=private`, new AbortController().signal, 20)).rejects.toThrow('Host rejected')
+    const rejected = await server('reject')
+    await expect(createTerminalTransport(`${rejected.base}?token=private`, new AbortController().signal, 1000)).rejects.toThrow('Host rejected')
   })
 
   it('rejects malformed authentication without exposing the supplied URL', async () => {

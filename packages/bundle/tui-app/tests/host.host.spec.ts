@@ -72,7 +72,8 @@ setInterval(() => {}, 1000)
       await expect(readFile(patch)).rejects.toThrow()
       expect(host.lost.aborted).toBe(true)
     } finally {
-      process.argv[1] = savedEntry
+      if (savedEntry === undefined) process.argv.splice(1, 1)
+      else process.argv[1] = savedEntry
       process.execArgv = savedArgs
     }
   })
@@ -118,7 +119,8 @@ await startTerminalHost({ cwd: ${JSON.stringify(dir)}, initial: { kind: 'new' },
     try {
       await expect(startTerminalHost({ cwd: dir, initial: { kind: 'new' }, host: { kind: 'owned', profile: 'web' } }, new AbortController().signal, 50, 500)).rejects.toThrow('startup timeout')
     } finally {
-      process.argv[1] = savedEntry
+      if (savedEntry === undefined) process.argv.splice(1, 1)
+      else process.argv[1] = savedEntry
       process.execArgv = savedArgs
     }
   })
