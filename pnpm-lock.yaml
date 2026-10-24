@@ -169,6 +169,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^4.1.11
         version: 4.1.11(vitest@4.1.11)
+      '@xterm/headless':
+        specifier: ^6.0.0
+        version: 6.0.0
       '@yao-pkg/pkg':
         specifier: 6.21.0
         version: 6.21.0(patch_hash=4d4861969595629311f7d90a0b34b15481c96d5682d828a151a104c69d4616d3)(supports-color@9.4.0)
@@ -2986,6 +2989,9 @@ importers:
       '@types/ws':
         specifier: 8.18.1
         version: 8.18.1
+      '@xterm/headless':
+        specifier: ^6.0.0
+        version: 6.0.0
 
   packages/bundle/web-app:
     dependencies:

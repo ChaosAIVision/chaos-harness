@@ -1,4 +1,5 @@
 /** Terminal editor and request presentation behavior through real Pi components. */
+import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 import type { Terminal } from '@earendil-works/pi-tui'
 import { TerminalRenderer } from '../src/renderer.ts'
@@ -27,6 +28,24 @@ class TestTerminal implements Terminal {
   setProgress(): void {}
 }
 
+const headless: typeof import('@xterm/headless') = createRequire(import.meta.url)('@xterm/headless')
+
+class ScreenTerminal extends TestTerminal {
+  readonly screen = new headless.Terminal({ cols: this.columns, rows: this.rows, allowProposedApi: true })
+  override write(text: string): void { super.write(text); this.screen.write(text) }
+  async text(): Promise<string> {
+    await new Promise<void>(resolve => this.screen.write('', resolve))
+    const buffer = this.screen.buffer.active
+    return Array.from({ length: this.rows }, (_, row) => buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '').join('\n')
+  }
+  size(columns: number, rows: number): void {
+    this.columns = columns
+    this.rows = rows
+    this.screen.resize(columns, rows)
+    this.resize()
+  }
+}
+
 const tick = (): Promise<void> => new Promise(resolve => setImmediate(resolve))
 
 function renderer(terminal = new TestTerminal()): { view: TerminalRenderer; terminal: TestTerminal; submissions: string[] } {
@@ -38,6 +57,51 @@ function renderer(terminal = new TestTerminal()): { view: TerminalRenderer; term
 }
 
 describe('terminal conversation views', () => {
+  it('covers the conversation with a model menu across resizes and restores it on Escape', async () => {
+    const terminal = new ScreenTerminal()
+    const { view } = renderer(terminal)
+    try {
+      view.editor.setText('Retained draft')
+      view.update({ title: 'Conversation title', footer: 'Connected', rows: [
+        { key: 'answer', kind: 'assistant', title: 'Assistant', text: Array(20).fill('¤'.repeat(70)).join('\n') },
+      ] })
+      await expect.poll(() => terminal.text()).toContain('¤')
+      const choice = view.scoped(new AbortController().signal).choose('Select a model', [
+        { label: 'Model A', value: 'a' }, { label: 'Model B', value: 'b' },
+      ])
+      await expect.poll(() => terminal.text()).toContain('Select a model')
+      expect(await terminal.text()).not.toMatch(/¤|Conversation title|Retained draft|Connected/)
+      for (const size of [{ columns: 48, rows: 14 }, { columns: 100, rows: 32 }]) {
+        terminal.size(size.columns, size.rows)
+        await expect.poll(() => terminal.text()).toContain('Model B')
+        expect(await terminal.text()).not.toMatch(/¤|Conversation title|Retained draft|Connected/)
+      }
+      terminal.input('\u001b')
+      expect(await choice).toBeUndefined()
+      await expect.poll(() => terminal.text()).toContain('Retained draft')
+      expect(await terminal.text()).toContain('¤')
+      expect(await terminal.text()).toContain('Conversation title')
+      expect(await terminal.text()).not.toContain('Select a model')
+      terminal.input(' editor')
+      expect(view.editor.getExpandedText()).toBe('Retained draft editor')
+    } finally { view.stop(); terminal.screen.dispose() }
+  })
+
+  it('hides internal context while preserving human and assistant messages on the screen', async () => {
+    const terminal = new ScreenTerminal()
+    const { view } = renderer(terminal)
+    try {
+      view.update({ title: 'Chat', footer: 'Connected', rows: [
+        { key: 'context', kind: 'context', title: 'Internal context', text: 'INTERNAL_CONTEXT_SENTINEL' },
+        { key: 'human', kind: 'user', title: 'You', text: 'Human message stays visible' },
+        { key: 'assistant', kind: 'assistant', title: 'Assistant', text: 'Assistant reply stays visible' },
+      ] })
+      await expect.poll(() => terminal.text()).toContain('Human message stays visible')
+      expect(await terminal.text()).toContain('Assistant reply stays visible')
+      expect(await terminal.text()).not.toMatch(/Internal context|INTERNAL_CONTEXT_SENTINEL/)
+    } finally { view.stop(); terminal.screen.dispose() }
+  })
+
   it('submits bracketed multiline paste once and retains the draft until acceptance', () => {
     const { view, terminal, submissions } = renderer()
     try {
