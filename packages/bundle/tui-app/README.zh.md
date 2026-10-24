@@ -27,6 +27,8 @@ dsh tui --connect-url-file /path/to/private-connect-url
 
 关闭终端会释放客户端状态、恢复终端模式，并且只停止终端拥有的主机。子进程在父进程死亡时也会退出，包括启动期间。终端配置中的 `startupTimeoutMs` 和 `shutdownTimeoutMs` 分别设置就绪和关闭时限。启动错误包含长度受限且已脱敏的子进程诊断末尾内容。
 
+斜杠发现包含活动 Host 命令和可调用 skill。名称与终端动作冲突时，`/host:NAME` 和 `/skill:NAME` 保留对原操作的显式访问。子任务历史只使用终端导航，不激活普通 Agent 的命令目录。
+
 ## Model Experience
 
 ### Existing Web composition

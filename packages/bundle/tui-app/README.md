@@ -27,6 +27,8 @@ An owned Host receives a private readiness plugin through a temporary patch. It 
 
 Closing the terminal disposes Client state, restores terminal modes, and stops only its owned Host. The child also stops when its parent dies, including during startup. The terminal profile's `startupTimeoutMs` and `shutdownTimeoutMs` configure readiness and shutdown bounds. Startup errors include a bounded, redacted child diagnostic tail.
 
+Slash discovery includes active Host commands and invocable skills. When a name conflicts with a terminal action, `/host:NAME` and `/skill:NAME` retain explicit access to the original operation. Child history uses terminal navigation without ordinary-Agent command activation.
+
 ## Model Experience
 
 ### Existing Web composition

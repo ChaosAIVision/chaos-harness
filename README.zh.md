@@ -42,6 +42,8 @@ pnpm run build
 pnpm dsh web
 ```
 
+运行 `pnpm dsh tui` 使用终端界面，或运行 `pnpm dsh tui --load` 浏览已保存的 Session。参见[终端 profile](packages/bundle/tui-app/README.zh.md)。
+
 `pnpm run build` 会准备仓库产物。`pnpm dsh web` 会直接使用这些已构建产物，不会重新构建。
 
 ## 社区与支持

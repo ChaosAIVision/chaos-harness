@@ -38,6 +38,8 @@ pnpm run build
 pnpm dsh web
 ```
 
+Run `pnpm dsh tui` for the terminal interface, or `pnpm dsh tui --load` to browse saved sessions. See the [terminal profile](packages/bundle/tui-app/README.md).
+
 `pnpm run build` prepares the repository artifacts. `pnpm dsh web` uses those built artifacts without rebuilding.
 
 ## Community and support

@@ -16,6 +16,15 @@ async function directory() {
 }
 
 describe('Terminal Host ownership', () => {
+  it('redacts API cookies from headers and standalone diagnostic values', () => {
+    const value = 'v2.cHJpdmF0ZQ.c2lnbmF0dXJl'
+    const text = `Cookie: dsh-auth-YXVkaWVuY2U=${value}; other=public\nSet-Cookie: dsh-auth-YXVkaWVuY2U=${value}; Path=/\n${value}`
+    const redacted = redactHostDiagnostic(text)
+    expect(redacted).not.toContain(value)
+    expect(redacted).not.toContain('dsh-auth-YXVkaWVuY2U')
+    expect(redacted).toContain('other=public')
+  })
+
   it('redacts private URLs, named credentials, and terminal control bytes from diagnostics', () => {
     const output = redactHostDiagnostic('\x1b[31mfailed https://host/?token=private apiKey=secret-value sk-hidden\x1b[0m')
     expect(output).toContain('failed')

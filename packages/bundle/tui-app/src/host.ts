@@ -144,6 +144,8 @@ export function redactHostDiagnostic(text: string): string {
   return text
     .replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, '')
     .replace(/https?:\/\/[^\s"'<>]+/gi, '[Host URL]')
+    .replace(/\bdsh-auth-[A-Za-z0-9_-]+\s*=\s*[^\s;]+/g, '[redacted auth cookie]')
+    .replace(/\bv2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[redacted auth cookie]')
     .replace(/((?:token|api[-_]?key|authorization|password|secret)\s*[=:]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;}]+)/gi, '$1[redacted]')
     .replace(/\b(?:sk|dsk)-[A-Za-z0-9_-]+/g, '[redacted]')
     .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')

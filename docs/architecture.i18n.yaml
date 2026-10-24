@@ -3,17 +3,17 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/architecture.md
 /deepseek-harness-architecture:
-  en: 20678ed3f962afba
+  en: 66b63573176f1a9a
   zh: 87a2b81675d93346
 /deepseek-harness-architecture/cordis:
   en: da5060e577578ea7
   zh: 2e77d570e32d8938
 /deepseek-harness-architecture/profiles-and-bundles:
-  en: 21423f481b18b0be
-  zh: 5343bd7ea0fae5bc
+  en: 8779fabacdc76058
+  zh: ed97262b4789648f
 /deepseek-harness-architecture/application-launch:
-  en: 334b4f390b6e376b
-  zh: ce094f24c6162be3
+  en: c6848ed66fcd47ce
+  zh: 0cb1657f7c23087c
 /deepseek-harness-architecture/desktop-application:
   en: b9eeb18645121a8b
   zh: 70d87a12c43e042a

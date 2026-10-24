@@ -88,12 +88,13 @@ class Conversation {
     this.unsubscribe.push(this.connection.state.subscribe(() => this.update()))
     this.unsubscribe.push(this.client.remote.$on('commands/change', () => {
       const session = this.reference?.binding.session
-      if (session !== undefined) this.perform(() => this.catalog.refresh(session.sessionId, this.options.signal))
+      if (session !== undefined) this.perform(() => this.refreshCatalog())
     }))
     this.unsubscribe.push(this.client.remote.$on('agent-preset/selected', (sessionId) => {
-      if (sessionId === this.reference?.sessionId) this.perform(() => this.catalog.refresh(sessionId, this.options.signal))
+      if (sessionId === this.reference?.sessionId) this.perform(() => this.refreshCatalog())
     }))
     await this.waitForConnection()
+    await this.client.sessions.refresh()
     switch (this.options.initial.kind) {
       case 'session': await this.select(this.options.initial.sessionId); break
       case 'picker': await this.picker(); break
@@ -147,7 +148,7 @@ class Conversation {
     this.renderer.editor.setText('')
     this.update()
     const refreshed = await Promise.allSettled([
-      this.catalog.refresh(binding.sessionId, this.options.signal),
+      this.refreshCatalog(),
       this.client.remote.session.modelCatalog().then((result) => {
         const catalog = accepted(result)
         this.defaultModel = `${catalog.default.provider}/${catalog.default.model}`
@@ -158,6 +159,12 @@ class Conversation {
   }
 
   private sessionSubscriptions: (() => void)[] = []
+
+  private async refreshCatalog(): Promise<void> {
+    const session = this.required()
+    if (session.getSnapshot().subagent !== null) this.catalog.localOnly()
+    else await this.catalog.refresh(session.sessionId, this.options.signal)
+  }
 
   private update(): void {
     const binding = this.reference?.binding
@@ -216,6 +223,17 @@ class Conversation {
     const [command = '', ...rest] = text.slice(1).split(/\s+/)
     const argument = rest.join(' ').trim()
     const view = this.host.view
+    if (command.startsWith('host:') || command.startsWith('skill:')) {
+      await this.refreshCatalog()
+      const qualified = this.catalog.list().find(item => item.name === command)
+      if (qualified === undefined) throw new Error(`${t.unknownCommand} /${command}`)
+      const invocation = `/${text.slice(text.indexOf(':') + 1)}`
+      if (qualified.kind === 'host') accepted(await this.required().command(invocation))
+      else await this.prompt(invocation)
+      this.renderer.accepted(text)
+      this.update()
+      return
+    }
     switch (command) {
       case 'quit': case 'exit': this.quit(); return
       case 'new': await this.create(argument || undefined); break
@@ -241,14 +259,15 @@ class Conversation {
       case 'reasoning': this.renderer.reasoningExpanded = !this.renderer.reasoningExpanded; break
       case 'questions': await this.interactions.answerContinued(this.required()); break
       case 'help':
-        await this.catalog.refresh(this.required().sessionId, this.options.signal)
+        await this.refreshCatalog()
         await view.show(t.title, this.catalog.list().map(item => `/${item.name} ${item.description ?? ''}`).join('\n\n'))
         break
       default: {
         if (await handleTerminalFeature(text, this.host)) break
+        if (this.required().getSnapshot().subagent !== null) throw new Error(`${t.unknownCommand} /${command}`)
         const result = accepted(await this.required().command(text))
         if (!result.matched) {
-          await this.catalog.refresh(this.required().sessionId, this.options.signal)
+          await this.refreshCatalog()
           if (this.catalog.list().some(item => item.name === command && item.kind === 'skill')) await this.prompt(text)
           else throw new Error(`${t.unknownCommand} /${command}`)
         }

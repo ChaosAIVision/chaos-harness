@@ -5,6 +5,27 @@ import { describe, expect, it } from 'vitest'
 import { TerminalCatalog } from '../src/catalog.ts'
 
 describe('terminal slash catalog', () => {
+  it('keeps colliding Host commands and skills reachable through explicit names', async () => {
+    const client = new Context()
+    Object.defineProperty(client, 'remote', { value: {
+      commands: { list: async () => ({ ok: true, value: [{ name: 'settings' }, { name: 'review' }] }) },
+      skills: { list: async () => ({ ok: true, value: { skills: [{ name: 'settings' }, { name: 'review' }] } }) },
+    } })
+    try {
+      const catalog = new TerminalCatalog(client, [{ name: 'settings', description: 'Terminal settings' }])
+      await catalog.refresh(SessionId('collision'), new AbortController().signal)
+      const commands = new Map(catalog.list().map(command => [command.name, command.kind]))
+      expect(commands.get('settings')).toBe('terminal')
+      expect(commands.get('host:settings')).toBe('host')
+      expect(commands.get('skill:settings')).toBe('skill')
+      expect(commands.get('review')).toBe('host')
+      expect(commands.get('skill:review')).toBe('skill')
+      catalog.localOnly()
+      expect(catalog.list().every(command => command.kind === 'terminal')).toBe(true)
+      expect(new Set(catalog.list().map(command => command.name)).size).toBe(catalog.list().length)
+    } finally { await client.fiber.dispose() }
+  })
+
   it('merges Host commands, user-invocable skills, and terminal actions with one execution owner', async () => {
     const client = new Context()
     let names = ['host-action']

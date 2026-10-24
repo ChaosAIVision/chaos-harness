@@ -19,8 +19,7 @@ export class TerminalCatalog {
   private sessionId: SessionId | undefined
 
   constructor(private readonly client: Context, private readonly features: readonly TerminalFeatureCommand[]) {
-    this.commands = [...features.map(command => ({ ...command, kind: 'terminal' as const })),
-      ...Object.entries(t.commands).map(([name, description]) => ({ name, description, kind: 'terminal' as const }))]
+    this.localOnly()
   }
 
   /**
@@ -28,6 +27,16 @@ export class TerminalCatalog {
    * @returns the latest successful catalog, including terminal-local commands.
    */
   list(): readonly TerminalCommand[] { return this.commands }
+
+  /** Keep navigation available without activating an ordinary Agent for a child address. */
+  localOnly(): void {
+    this.sessionId = undefined
+    this.generation++
+    const commands = new Map<string, TerminalCommand>()
+    for (const command of this.features) commands.set(command.name, { ...command, kind: 'terminal' })
+    for (const [name, description] of Object.entries(t.commands)) commands.set(name, { name, description, kind: 'terminal' })
+    this.commands = [...commands.values()]
+  }
 
   /**
    * Refresh without publishing a result for an obsolete selected Session.
@@ -46,8 +55,18 @@ export class TerminalCatalog {
     if (!skills.ok) throw new Error(`${skills.error.code}: ${skills.error.message}`)
     if (generation !== this.generation || signal.aborted) return
     const catalog = new Map<string, TerminalCommand>()
+    const localNames = new Set([...this.features.map(command => command.name), ...Object.keys(t.commands)])
     for (const skill of skills.value.skills) catalog.set(skill.name, { ...skill, kind: 'skill' })
     for (const command of commands.value) catalog.set(command.name, { ...command, kind: 'host' })
+    for (const command of commands.value) {
+      if (localNames.has(command.name)) catalog.set(`host:${command.name}`, { ...command, name: `host:${command.name}`, kind: 'host' })
+    }
+    const hostNames = new Set(commands.value.map(command => command.name))
+    for (const skill of skills.value.skills) {
+      if (localNames.has(skill.name) || hostNames.has(skill.name)) {
+        catalog.set(`skill:${skill.name}`, { ...skill, name: `skill:${skill.name}`, kind: 'skill' })
+      }
+    }
     for (const command of this.features) catalog.set(command.name, { ...command, kind: 'terminal' })
     for (const [name, description] of Object.entries(t.commands)) catalog.set(name, { name, description, kind: 'terminal' })
     this.commands = [...catalog.values()].sort((a, b) => a.name.localeCompare(b.name))
