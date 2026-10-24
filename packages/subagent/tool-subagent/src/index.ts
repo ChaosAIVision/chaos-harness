@@ -39,7 +39,8 @@ import {
 export { assertAllowedModelSelection, preflightChildLlmRoute } from './model-selection.ts'
 export type { ModelSelectionPolicy } from './model-selection.ts'
 /** Shared durable Session route policy readers for delegation tools. */
-export { subagentModelSelectionProjectionDefinition, subagentModelSelectionPolicy } from './model-selection-state.ts'
+export { sessionPolicy, subagentModelSelectionProjectionDefinition, subagentModelSelectionPolicy } from './model-selection-state.ts'
+export type { PolicyOrigin, SessionRoutePolicy } from './model-selection-state.ts'
 
 export const name = 'tool-subagent'
 export const inject = ['tools', 'subagents', 'systemPrompt', 'sessionProjections']
