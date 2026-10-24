@@ -579,10 +579,10 @@ describe('SubagentHeaderLineage', () => {
     ] satisfies CatalogFixtureEntry[]
     const input = props(catalog({ entries }), {}, {
       [CHILD]: summary(CHILD, 1),
-      failed: { ...summary('failed' as SessionId, 1), projectionValues: {
+      ['failed' as SessionId]: { ...summary('failed' as SessionId, 1), projectionValues: {
         subagentTiming: { settledMs: 1_000, lastTurnCompleted: false },
       } },
-      external: { ...summary('external' as SessionId, 1), projectionValues: {
+      ['external' as SessionId]: { ...summary('external' as SessionId, 1), projectionValues: {
         subagentTiming: { settledMs: 1_000, lastTurnCompleted: true },
       } },
     }, { parentSessionId: PARENT, childSessionId: CHILD, mode: 'continuable' })
