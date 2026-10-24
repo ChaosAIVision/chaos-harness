@@ -1448,7 +1448,7 @@ export type PaidTranslationProvider = 'deepseek-account' | 'deepseek-official'
 ## `@deepseek-ai/dsh-experimental-worktree`
 
 - `inject`: `workingDirectory` · `fs` · `subprocess` · `sandbox` · `sandboxPolicy`
-- `source`: [`packages/experimental/worktree/src/index.ts:19`](../packages/experimental/worktree/src/index.ts)
+- `source`: [`packages/experimental/worktree/src/index.ts:29`](../packages/experimental/worktree/src/index.ts)
 
 ```ts config-catalog
 /** Worktree location, generated names, executables, and subprocess resource limits. */
@@ -1467,6 +1467,11 @@ export interface Config {
   graceMs?: number
   /** Maximum captured bytes per subprocess output stream. */
   maxOutputBytes?: number
+  /**
+   * Revision that delegate leases start from. `remote-default` uses the local `origin/HEAD` target without
+   * fetching and falls back to `HEAD`; `head` uses the caller's `HEAD`.
+   */
+  baseRef?: 'remote-default' | 'head'
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-worktree -->
