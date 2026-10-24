@@ -124,7 +124,18 @@ export class WorktreeService extends Service {
     return { branch, revision }
   }
 
-  private async createCheckout(agent: Agent, { branch, revision }: WorktreeSpec, signal: AbortSignal): Promise<CreatedWorktree> {
+  private async createCheckout(agent: Agent, spec: WorktreeSpec, signal: AbortSignal): Promise<CreatedWorktree> {
+    const created = await this.checkout(agent, spec, signal)
+    try {
+      const path = await this.ctx.workingDirectory.set(agent, created.path, signal)
+      return { ...created, path }
+    } catch (error) {
+      throw incomplete(created.branch, created.path, error)
+    }
+  }
+
+  /** Create the branch and checkout for a spec. The caller's working directory is never changed. */
+  private async checkout(agent: Agent, { branch, revision }: WorktreeSpec, signal: AbortSignal): Promise<CreatedWorktree> {
     const cwd = await this.ctx.workingDirectory.ensure(agent, signal)
     const policy = this.ctx.sandboxPolicy.resolve({ session: agent.session })
     const run = (directory: string, args: string[], allowedExitCodes?: number[], env?: NodeJS.ProcessEnv) => runCommand(
@@ -167,12 +178,15 @@ export class WorktreeService extends Service {
         }
       }
       await run(path, ['--work-tree', path, 'reset', '--hard', '--no-recurse-submodules', baseCommit], undefined, overrides)
-      const canonicalPath = await this.ctx.workingDirectory.set(agent, path, signal)
-      return { path: canonicalPath, branch, baseCommit, repositoryRoot }
+      return { path: this.ctx.fs.processPath(await this.ctx.fs.resolve(path, { signal })), branch, baseCommit, repositoryRoot }
     } catch (error) {
-      throw new Error(`Could not finish worktree ${branch} at ${path}. Any created checkout and branch are retained. ${error instanceof Error ? error.message : String(error)}`, { cause: error })
+      throw incomplete(branch, path, error)
     }
   }
+}
+
+function incomplete(branch: string, path: string, error: unknown): Error {
+  return new Error(`Could not finish worktree ${branch} at ${path}. Any created checkout and branch are retained. ${error instanceof Error ? error.message : String(error)}`, { cause: error })
 }
 
 export default WorktreeService
