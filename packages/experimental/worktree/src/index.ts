@@ -210,10 +210,6 @@ export class WorktreeService extends Service {
     return combined
   }
 
-  /**
-   * Bind the caller's policy and directory, locate its repository, and run `inRepository`; `outside` runs
-   * instead when the directory is not a Git work tree with commits.
-   */
   private async withRepository<T>(
     agent: Agent,
     signal: AbortSignal | undefined,

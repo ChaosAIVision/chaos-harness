@@ -66,12 +66,6 @@ export function mergeRoutes(have: readonly AllowedModelRoute[], want: readonly A
   return [...have.map(route => ({ ...route })), ...missingRoutes(have, want)]
 }
 
-/**
- * Whether `next` contains every route of `current`.
- * @param next - candidate route list.
- * @param current - routes that must survive.
- * @returns true when no current route is missing from `next`.
- */
 function containsAll(next: readonly AllowedModelRoute[], current: readonly AllowedModelRoute[]): boolean {
   return missingRoutes(next, current).length === 0
 }

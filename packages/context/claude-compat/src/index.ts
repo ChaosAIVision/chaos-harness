@@ -241,7 +241,6 @@ function parseEffort(value: unknown, source: string): string {
   return value
 }
 
-/** Without a host that can ask a person, only a save that needs no route confirmation succeeds. */
 const withoutConfirmation: NonNullable<CompatHost['widenSession']> = async (_exec, _routes, steps) =>
   steps.unsaved.length === 0
     ? { kind: 'unchanged', revision: undefined, saved: await steps.persist(undefined) }

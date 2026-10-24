@@ -16,7 +16,6 @@ import type { IsolatedActivation, Isolated, KeptReason, KeptReport, LeaseStatus,
 
 const LEASE_FILE = 'dsh-lease.json'
 
-/** A lease checkout together with its parsed metadata and admin directory. */
 interface LeaseRef {
   path: string
   branch: string
