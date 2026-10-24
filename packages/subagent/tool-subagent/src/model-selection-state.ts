@@ -46,14 +46,34 @@ const modelSelectionPolicySchema: zod.ZodType<SessionRoutePolicy | null> = zod.o
 }).strict().nullable()
 
 /**
+ * Routes of `want` that `have` does not contain.
+ * @param have - routes already authorized.
+ * @param want - routes that should be authorized.
+ * @returns detached copies of the missing routes, in `want` order.
+ */
+export function missingRoutes(have: readonly AllowedModelRoute[], want: readonly AllowedModelRoute[]): AllowedModelRoute[] {
+  const keys = new Set(have.map(modelRouteKey))
+  return want.filter(route => !keys.has(modelRouteKey(route))).map(route => ({ ...route }))
+}
+
+/**
+ * Union of two route lists with no duplicates.
+ * @param have - routes kept first, in order.
+ * @param want - routes appended when absent from `have`.
+ * @returns detached copies containing every route of both lists.
+ */
+export function mergeRoutes(have: readonly AllowedModelRoute[], want: readonly AllowedModelRoute[]): AllowedModelRoute[] {
+  return [...have.map(route => ({ ...route })), ...missingRoutes(have, want)]
+}
+
+/**
  * Whether `next` contains every route of `current`.
  * @param next - candidate route list.
  * @param current - routes that must survive.
  * @returns true when no current route is missing from `next`.
  */
 function containsAll(next: readonly AllowedModelRoute[], current: readonly AllowedModelRoute[]): boolean {
-  const keys = new Set(next.map(modelRouteKey))
-  return current.every(route => keys.has(modelRouteKey(route)))
+  return missingRoutes(next, current).length === 0
 }
 
 /**
@@ -111,17 +131,4 @@ export function sessionPolicy(
 ): SessionRoutePolicy | undefined {
   const state = subagentModelSelectionProjectionHandle.stateOf(session)
   return state === null ? undefined : { revision: state.revision, routes: state.routes.map(route => ({ ...route })) }
-}
-
-/**
- * Read the exact route list authorized for a Session.
- * @param subagentModelSelectionProjectionHandle - registered policy state reader.
- * @param session - session whose durable decision is read.
- * @returns a detached route list, or undefined to restrict selection to the parent route.
- */
-export function subagentModelSelectionPolicy(
-  subagentModelSelectionProjectionHandle: Pick<ProjectionHandle<SessionRoutePolicy | null>, 'stateOf'>,
-  session: Session,
-): AllowedModelRoute[] | undefined {
-  return sessionPolicy(subagentModelSelectionProjectionHandle, session)?.routes.map(route => ({ ...route }))
 }

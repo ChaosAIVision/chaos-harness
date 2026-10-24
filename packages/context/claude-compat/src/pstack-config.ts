@@ -3,6 +3,7 @@ import { linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } 
 import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute, join } from 'node:path'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import { assertHumanApproval } from '@deepseek-ai/dsh-tool-subagent'
 import type { HumanApproval } from '@deepseek-ai/dsh-tool-subagent'
 import type { RouteConfig } from './index.ts'
 
@@ -147,6 +148,7 @@ export function assertSetupUpdate(value: unknown): asserts value is Record<strin
  * @returns committed preferences filename.
  */
 export function savePstackPreferences(value: unknown, grant?: HumanApproval): string {
+  if (grant !== undefined) assertHumanApproval(grant)
   const current = loadPstackPreferences()
   assertSetupUpdate(value)
   const added = (grant?.routes ?? []).filter(route => !current.allowedModels.some(

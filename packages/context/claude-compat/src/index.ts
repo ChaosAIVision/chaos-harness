@@ -34,15 +34,15 @@ import {
   sessionPolicy,
   subagentModelSelectionProjectionDefinition,
 } from '@deepseek-ai/dsh-tool-subagent'
-import type { HumanApproval, ModelSelectionPolicy, WidenSessionOutcome } from '@deepseek-ai/dsh-tool-subagent'
+import type { HumanApproval, ModelSelectionPolicy, WidenSessionOutcome, WidenSessionSteps } from '@deepseek-ai/dsh-tool-subagent'
 import * as hooksBridge from '@deepseek-ai/dsh-hooks-claude-code'
 import * as filesystemSkills from '@deepseek-ai/dsh-skill-filesystem'
 import { bundledPstackRoot } from './pstack-resources.ts'
 export { bundledPstackRoot } from './pstack-resources.ts'
 import { parse as parseYaml } from 'yaml'
-import { assertSetupUpdate, loadPstackPreferences, pstackConfigPath, savePstackPreferences } from './pstack-config.ts'
-import { contextMessage, parseRoleLines, preferenceRoleLines, renderRoleSheet, splitRoleLines } from './role-sheet.ts'
-import type { RoleSheet } from './role-sheet.ts'
+import { assertSetupUpdate, loadPstackPreferences, savePstackPreferences } from './pstack-config.ts'
+import { contextMessage, loadRoleSheet, renderRoleSheet } from './role-sheet.ts'
+import type { RoleChoices, RoleSheet } from './role-sheet.ts'
 export { loadPstackPreferences, parsePstackPreferences, pstackConfigPath, savePstackPreferences } from './pstack-config.ts'
 
 export const name = 'experimental-claude-compat'
@@ -128,9 +128,8 @@ export interface CompatHost {
   readonly widenSession?: (
     exec: Parameters<ToolDefinition['execute']>[1],
     routes: Array<{ provider: string; model: string }>,
-    unsaved: Array<{ provider: string; model: string }>,
-    persist: (approval: HumanApproval | undefined) => Promise<void>,
-  ) => Promise<WidenSessionOutcome>
+    steps: Omit<WidenSessionSteps<string>, 'ask'>,
+  ) => Promise<WidenSessionOutcome<string>>
   /** Queue model-facing context for an Agent's next step without waking it. */
   readonly injectContext?: (agent: Agent, text: string) => void
   /** Mount the Claude hook bridge for one plugin root. */
@@ -218,12 +217,19 @@ function parseEffort(value: unknown, source: string): string {
   return value
 }
 
+/** Without a host that can ask a person, only a save that needs no route confirmation succeeds. */
+const withoutConfirmation: NonNullable<CompatHost['widenSession']> = async (_exec, _routes, steps) =>
+  steps.unsaved.length === 0
+    ? { kind: 'unchanged', revision: undefined, saved: await steps.persist(undefined) }
+    : { kind: 'declined' }
+
 /**
  * Install the compatibility tool and hook bridges on any host.
  * @param host - tool registry, subagent dispatch, LLM catalog, and hook mounting.
  * @param config - plugin roots, dispatch provider, routes, and hook toggle.
  */
 export function install(host: CompatHost, config: Config): void {
+  const widen = host.widenSession ?? withoutConfirmation
   const preferences = config.pstack === undefined ? loadPstackPreferences() : undefined
   const modelAliases = () => ({
     ...config.pstack === undefined ? loadPstackPreferences().modelAliases : {},
@@ -251,28 +257,17 @@ export function install(host: CompatHost, config: Config): void {
   ].join('\n')
   const pstackRoot = config.pstack === undefined
     ? preferences?.root ?? bundledPstackRoot() : absoluteFrom(config.pstack.root, process.cwd())
-  const sheetPath = config.pstack === undefined ? pstackConfigPath() : absoluteFrom(config.pstack.sheetPath, process.cwd())
-  const currentSheet = (): {
-    readonly sheet: RoleSheet
-    readonly hookOff: boolean
-    readonly roles: Record<string, string>
-    readonly defaultEffort: string | undefined
-  } => {
-    const parsed = config.pstack === undefined
-      ? preferenceRoleLines(loadPstackPreferences())
-      : (() => {
-        const bytes = readFileSync(sheetPath)
-        return parseRoleLines(bytes.toString(bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf16le' : 'utf8')
-          .replace(/^\uFEFF/, '').replace(/\r\n/g, '\n'))
-      })()
+  const sheetPath = config.pstack === undefined ? undefined : absoluteFrom(config.pstack.sheetPath, process.cwd())
+  const currentSheet = (): { readonly sheet: RoleSheet; readonly hookOff: boolean; readonly choices: RoleChoices } => {
+    const loaded = loadRoleSheet(sheetPath)
     const aliases = modelAliases()
     return {
-      hookOff: parsed.sessionHookOff,
-      ...splitRoleLines(parsed.lines),
+      hookOff: loaded.hookOff,
+      choices: loaded.choices,
       sheet: renderRoleSheet({
-        lines: parsed.lines,
+        choices: loaded.choices,
         aliases,
-        source: config.pstack === undefined ? '$DSH_HOME/pstack/config.json' : JSON.stringify(sheetPath),
+        source: loaded.source,
         unconfiguredHint: preferences !== undefined && Object.keys(aliases).length === 0,
       }),
     }
@@ -469,11 +464,11 @@ export function install(host: CompatHost, config: Config): void {
           provider: provider.id,
           models: (await listModels(provider.id)).map(model => ({ id: model.id, name: model.name })),
         })))
-      const { sheet, roles, defaultEffort } = currentSheet()
+      const { sheet, choices } = currentSheet()
       return {
         catalog,
-        roles,
-        ...defaultEffort === undefined ? {} : { defaultEffort },
+        roles: choices.roles,
+        ...choices.defaultEffort === undefined ? {} : { defaultEffort: choices.defaultEffort },
         ...policy?.revision === undefined ? {} : { policyRevision: policy.revision },
         sheetDigest: sheet.digest,
         aliases: await Promise.all(Object.entries(aliases).map(async ([alias, route]) => {
@@ -538,17 +533,10 @@ export function install(host: CompatHost, config: Config): void {
         item.provider === route.provider && item.model === route.model))
       const parent = exec.agent
       if (parent === undefined) throw new Error('claude_agent_setup requires a calling agent')
-      let saved = ''
-      const persist = (approval: HumanApproval | undefined): Promise<void> => {
-        saved = savePstackPreferences(value, approval)
-        return Promise.resolve()
-      }
-      let outcome: WidenSessionOutcome
-      if (host.widenSession !== undefined) outcome = await host.widenSession(exec, routes, unsaved, persist)
-      else if (unsaved.length === 0) {
-        await persist(undefined)
-        outcome = { kind: 'unchanged', revision: undefined }
-      } else outcome = { kind: 'declined' }
+      const outcome = await widen(exec, routes, {
+        unsaved,
+        persist: approval => Promise.resolve(savePstackPreferences(value, approval)),
+      })
       if (outcome.kind === 'declined') {
         throw new Error('Pstack model setup was not authorized by the user; no preferences were saved')
       }
@@ -558,7 +546,7 @@ export function install(host: CompatHost, config: Config): void {
       const policy = outcome.kind === 'widened'
         ? `Session policy revision ${outcome.revision} is active now.`
         : 'Session authorization is unchanged.'
-      return `Saved ${saved}. ${policy} Role sheet ${sheet.digest} was injected and supersedes earlier sheets. Explicit model choices still require host-owned Session authorization.`
+      return `Saved ${outcome.saved}. ${policy} Role sheet ${sheet.digest} was injected and supersedes earlier sheets. Explicit model choices still require host-owned Session authorization.`
     },
   }))
 
@@ -612,9 +600,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       return current === undefined ? undefined : { routes: current.routes, revision: current.revision }
     },
     ...settings === undefined ? {} : {
-      widenSession: (exec, routes, unsaved, persist) => {
+      widenSession: (exec, routes, steps) => {
         if (exec.agent === undefined) throw new Error('claude_agent_setup requires a calling agent')
-        return settings.widenSession(exec.agent, routes, { unsaved, ask: asked => askRoutes(asked, exec), persist }, exec.signal)
+        return settings.widenSession(exec.agent, routes, { ...steps, ask: asked => askRoutes(asked, exec) }, exec.signal)
       },
     },
     injectContext: (agent, text) => { agent.inject(contextMessage(text)) },

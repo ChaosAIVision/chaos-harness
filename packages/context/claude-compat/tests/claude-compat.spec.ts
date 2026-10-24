@@ -421,12 +421,11 @@ describe('pstack setup approval', () => {
     await writeFile(join(root, 'agents-home', 'pstack-plugin', 'hooks', 'session-start-context.md'), 'mandate')
     return harness({}, undefined, widen)
   }
-  type Persist = Parameters<NonNullable<CompatHost['widenSession']>>[3]
-  const widening = (answer: 'yes' | 'no', revision = 2) => vi.fn(async (_exec: unknown, routes: Array<{ provider: string; model: string }>, unsaved: Array<{ provider: string; model: string }>, persist: Persist) => {
-    if (routes.length === 0 && unsaved.length === 0) { await persist(undefined); return { kind: 'unchanged' as const, revision: 1 } }
+  type Steps = Parameters<NonNullable<CompatHost['widenSession']>>[2]
+  const widening = (answer: 'yes' | 'no', revision = 2) => vi.fn(async (_exec: unknown, routes: Array<{ provider: string; model: string }>, steps: Steps) => {
+    if (routes.length === 0 && steps.unsaved.length === 0) return { kind: 'unchanged' as const, revision: 1, saved: await steps.persist(undefined) }
     if (answer === 'no') return { kind: 'declined' as const }
-    await persist(mintHumanApproval(routes))
-    return { kind: 'widened' as const, revision }
+    return { kind: 'widened' as const, revision, saved: await steps.persist(mintHumanApproval(routes)) }
   })
   const preferences_json = JSON.stringify({ modelAliases: { chosen: { provider: 'alpha', model: 'judge' } }, roles: { 'feature, refactoring': 'chosen @high' } })
   it('fails closed without a widening seam when routes need confirmation', async () => {
@@ -448,7 +447,7 @@ describe('pstack setup approval', () => {
     const { tools, injected } = await setup(widen)
     const message = await tools.get('claude_agent_setup')!.execute({ preferences_json }, exec as never)
     expect(widen.mock.calls[0]?.[1]).toEqual([{ provider: 'alpha', model: 'judge' }])
-    expect(widen.mock.calls[0]?.[2]).toEqual([{ provider: 'alpha', model: 'judge' }])
+    expect(widen.mock.calls[0]?.[2].unsaved).toEqual([{ provider: 'alpha', model: 'judge' }])
     expect(loadPstackPreferences()?.allowedModels).toEqual([{ provider: 'alpha', model: 'judge' }])
     expect(Object.keys(loadPstackPreferences().roles)).toHaveLength(17)
     expect(injected).toHaveLength(1)
@@ -463,7 +462,7 @@ describe('pstack setup approval', () => {
     const { tools, injected } = await setup(widen)
     await tools.get('claude_agent_setup')!.execute({ preferences_json: JSON.stringify({ roles: { 'bug-fix': 'inherit-parent' }, defaultEffort: 'high' }) }, exec as never)
     expect(widen.mock.calls[0]?.[1]).toEqual([])
-    expect(widen.mock.calls[0]?.[2]).toEqual([])
+    expect(widen.mock.calls[0]?.[2].unsaved).toEqual([])
     expect(injected[0]).toContain('default effort: high')
   })
   it('refuses allowedModels in the model-supplied JSON before any question is asked', async () => {

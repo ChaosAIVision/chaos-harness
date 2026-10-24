@@ -1,10 +1,10 @@
 /** The model-facing pstack role sheet: one renderer for initialization and for mid-session refreshes. */
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { RouteConfig } from './index.ts'
-import { defaultPstackRoles } from './pstack-config.ts'
-import type { PstackPreferences } from './pstack-config.ts'
+import { defaultPstackRoles, loadPstackPreferences } from './pstack-config.ts'
 
 /** A rendered sheet and the digest a model can compare against `claude_agent_models`. */
 export interface RoleSheet {
@@ -14,10 +14,26 @@ export interface RoleSheet {
   readonly digest: string
 }
 
+/** Saved role choices as data; text appears only when a sheet is rendered. */
+export interface RoleChoices {
+  /** Role name to alias or comma-separated `alias@effort` entries. */
+  readonly roles: Readonly<Record<string, string>>
+  /** Effort applied to entries without a suffix; absent when the saved sheet states none. */
+  readonly defaultEffort: string | undefined
+}
+
+/** Role choices with where they came from. */
+export interface LoadedRoleSheet {
+  readonly choices: RoleChoices
+  /** Whether `session hook: off` is saved. */
+  readonly hookOff: boolean
+  /** Where the saved choices live, shown to the model. */
+  readonly source: string
+}
+
 /** Everything one sheet depends on. */
 export interface RoleSheetInput {
-  /** `role: choice` lines, including `default effort`; never the `session hook` line. */
-  readonly lines: readonly string[]
+  readonly choices: RoleChoices
   /** Aliases in force when the sheet is rendered. */
   readonly aliases: Readonly<Record<string, RouteConfig>>
   /** Where the saved choices live, shown to the model. */
@@ -27,54 +43,49 @@ export interface RoleSheetInput {
 }
 
 /**
- * Split a saved sheet into model-facing role lines and the session-hook switch.
+ * Parse a saved sheet file into role choices and the session-hook switch.
  * @param sheet - text with one `role: choice` pair per line.
- * @returns role and default-effort lines, and whether `session hook: off` is present.
+ * @returns role choices, the default effort when stated, and whether `session hook: off` is present.
  */
-export function parseRoleLines(sheet: string): { lines: string[]; sessionHookOff: boolean } {
-  const all = sheet.split('\n')
-  return {
-    sessionHookOff: all.includes('session hook: off'),
-    lines: all.filter(line => /^[a-z][a-z ,_-]*: .+$/.test(line) && !line.startsWith('session hook:')),
-  }
-}
-
-/**
- * Read role choices back out of sheet lines for structured discovery output.
- * @param lines - `role: choice` lines including `default effort`.
- * @returns role choices and the default effort, when one is stated.
- */
-export function splitRoleLines(lines: readonly string[]): { roles: Record<string, string>; defaultEffort: string | undefined } {
+export function parseRoleSheetFile(sheet: string): { choices: RoleChoices; hookOff: boolean } {
+  const lines = sheet.split('\n')
   const roles: Record<string, string> = {}
   let defaultEffort: string | undefined
   for (const line of lines) {
+    if (!/^[a-z][a-z ,_-]*: .+$/.test(line) || line.startsWith('session hook:')) continue
     const at = line.indexOf(': ')
     const key = line.slice(0, at)
     const value = line.slice(at + 2)
     if (key === 'default effort') defaultEffort = value
     else roles[key] = value
   }
-  return { roles, defaultEffort }
+  return { choices: { roles, defaultEffort }, hookOff: lines.includes('session hook: off') }
 }
 
 /**
- * Derive the sheet lines from saved preferences, filling roles the user never saved with shipped defaults.
- * @param preferences - validated home-scoped preferences.
- * @returns role and default-effort lines, and whether the session hook is off.
+ * Load the saved role choices from home-scoped preferences, or from a sheet file when one is configured.
+ * Preferences fill roles the user never saved with shipped defaults.
+ * @param sheetPath - absolute sheet file; undefined reads the preferences.
+ * @returns the choices, the hook switch, and the display source.
  */
-export function preferenceRoleLines(preferences: PstackPreferences): { lines: string[]; sessionHookOff: boolean } {
-  return {
-    sessionHookOff: preferences.sessionHook === false,
-    lines: [
-      ...Object.entries({ ...defaultPstackRoles(), ...preferences.roles }).map(([role, choice]) => `${role}: ${choice}`),
-      `default effort: ${preferences.defaultEffort ?? 'session'}`,
-    ],
+export function loadRoleSheet(sheetPath: string | undefined): LoadedRoleSheet {
+  if (sheetPath === undefined) {
+    const preferences = loadPstackPreferences()
+    return {
+      choices: { roles: { ...defaultPstackRoles(), ...preferences.roles }, defaultEffort: preferences.defaultEffort ?? 'session' },
+      hookOff: preferences.sessionHook === false,
+      source: '$DSH_HOME/pstack/config.json',
+    }
   }
+  const bytes = readFileSync(sheetPath)
+  const text = bytes.toString(bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf16le' : 'utf8')
+    .replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
+  return { ...parseRoleSheetFile(text), source: JSON.stringify(sheetPath) }
 }
 
 /**
  * Render the sheet. Pure: the same input always yields the same text and digest.
- * @param input - role lines, aliases, and display source.
+ * @param input - role choices, aliases, and display source.
  * @returns the sheet text and its digest.
  */
 export function renderRoleSheet(input: RoleSheetInput): RoleSheet {
@@ -84,7 +95,8 @@ export function renderRoleSheet(input: RoleSheetInput): RoleSheet {
   const body = [
     `Configured model aliases: ${aliasCatalog}.`,
     `Saved pstack model choices (${input.source}); use these role choices with claude_agent:`,
-    ...input.lines,
+    ...Object.entries(input.choices.roles).map(([role, choice]) => `${role}: ${choice}`),
+    ...input.choices.defaultEffort === undefined ? [] : [`default effort: ${input.choices.defaultEffort}`],
     input.unconfiguredHint
       ? 'Pstack models are not configured. Ask the user which models to use via setup-pstack; discover models with claude_agent_models and save with claude_agent_setup. Until configured, inherit the parent route; never invent aliases.'
       : '',

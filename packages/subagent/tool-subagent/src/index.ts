@@ -30,20 +30,17 @@ import {
 import type { DelegationModelRequest } from './model-selection.ts'
 import { registerListSubagentModels } from './list-models.ts'
 import { SubagentPresetSelection, type PresetSelectionConfig, type PresetSelectionRequest } from './preset-selection.ts'
-import {
-  subagentModelSelectionProjectionDefinition,
-  subagentModelSelectionPolicy,
-} from './model-selection-state.ts'
+import { sessionPolicy, subagentModelSelectionProjectionDefinition } from './model-selection-state.ts'
 
 /** Shared child route authorization and preflight for delegation tools. */
 export { assertAllowedModelSelection, preflightChildLlmRoute } from './model-selection.ts'
 export type { ModelSelectionPolicy } from './model-selection.ts'
 /** Proof of a person's route confirmation, required by persisted authorization and Session widening. */
-export { mintHumanApproval } from './human-approval.ts'
+export { assertHumanApproval, mintHumanApproval } from './human-approval.ts'
 export type { HumanApproval } from './human-approval.ts'
 export type { WidenSessionOutcome, WidenSessionSteps } from './model-selection-settings.ts'
 /** Shared durable Session route policy readers for delegation tools. */
-export { sessionPolicy, subagentModelSelectionProjectionDefinition, subagentModelSelectionPolicy } from './model-selection-state.ts'
+export { sessionPolicy, subagentModelSelectionProjectionDefinition } from './model-selection-state.ts'
 export type { PolicyOrigin, SessionRoutePolicy } from './model-selection-state.ts'
 
 export const name = 'tool-subagent'
@@ -284,8 +281,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
             throw new Error('subagent tool requires a calling agent (exec.agent was undefined)')
           }
 
-          const routes = subagentModelSelectionPolicy(subagentModelSelectionProjectionHandle, parent.session)
-          const modelSelectionPolicy = routes === undefined ? undefined : { routes }
+          const modelSelectionPolicy = sessionPolicy(subagentModelSelectionProjectionHandle, parent.session)
           const agentPreset = presets.resolve(args as PresetSelectionRequest)
           const modelRequest = args as DelegationModelRequest
           const parentOptions = parentAgentOptionsForDelegation(parent)

@@ -5,11 +5,27 @@ import { Session, SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/d
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import type { AllowedModelRoute } from '../src/model-selection.ts'
 import {
+  mergeRoutes,
+  missingRoutes,
   sessionPolicy,
-  subagentModelSelectionPolicy,
   subagentModelSelectionProjectionDefinition as definition,
 } from '../src/model-selection-state.ts'
 import { ownContext } from './harness.ts'
+
+describe('route list helpers', () => {
+  it('reports only the wanted routes that are absent, as copies', () => {
+    const want = [A, B]
+    const missing = missingRoutes([A], want)
+    expect(missing).toEqual([B])
+    expect(missing[0]).not.toBe(B)
+    expect(missingRoutes([A, B], want)).toEqual([])
+  })
+
+  it('merges without duplicates and keeps the held order first', () => {
+    expect(mergeRoutes([B], [A, B])).toEqual([B, A])
+    expect(mergeRoutes([A], [A])).toEqual([A])
+  })
+})
 
 const A: AllowedModelRoute = { provider: 'alpha', model: 'fast-model' }
 const B: AllowedModelRoute = { provider: 'beta', model: 'big-model' }
@@ -31,7 +47,7 @@ describe('model-selection policy projection', () => {
     const session = Session.create(SessionId('legacy'))
     session.append('subagent/model-selection-policy', { allowedModels: [A] })
     expect(sessionPolicy(handle, session)).toEqual({ revision: 1, routes: [A] })
-    expect(subagentModelSelectionPolicy(handle, session)).toEqual([A])
+    expect(sessionPolicy(handle, session)?.routes).toEqual([A])
   })
 
   it('accepts a successive superset from setup and exposes the latest', async () => {
