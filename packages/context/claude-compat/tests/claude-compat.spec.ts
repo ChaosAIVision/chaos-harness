@@ -450,7 +450,7 @@ describe('pstack setup approval', () => {
     expect(widen.mock.calls[0]?.[1]).toEqual([{ provider: 'alpha', model: 'judge' }])
     expect(widen.mock.calls[0]?.[2]).toEqual([{ provider: 'alpha', model: 'judge' }])
     expect(loadPstackPreferences()?.allowedModels).toEqual([{ provider: 'alpha', model: 'judge' }])
-    expect(Object.keys(loadPstackPreferences()!.roles)).toHaveLength(17)
+    expect(Object.keys(loadPstackPreferences().roles)).toHaveLength(17)
     expect(injected).toHaveLength(1)
     expect(injected[0]).toContain('chosen => alpha/judge')
     expect(injected[0]).toContain('feature, refactoring: chosen @high')

@@ -121,7 +121,7 @@ describe('claude_agent_setup in a running Session', () => {
     const sheets = agent.session.snapshotEvents().flatMap(event => [...JSON.stringify(event).matchAll(/pstack role sheet ([0-9a-f]{8})\./g)]
       .map(match => ({ seq: event.seq, digest: match[1] })))
     expect(sheets).toHaveLength(2)
-    expect(sheets[1]).toEqual({ seq: expect.any(Number), digest: found.sheetDigest })
+    expect(sheets[1]?.digest).toBe(found.sheetDigest)
     expect(sheets[0]!.digest).not.toBe(found.sheetDigest)
     expect(sheets[1]!.seq).toBeGreaterThan(policyEntries(agent)[1]!.seq)
     expect(loadPstackPreferences().allowedModels).toEqual([A, B])

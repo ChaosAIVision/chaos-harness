@@ -539,8 +539,9 @@ export function install(host: CompatHost, config: Config): void {
       const parent = exec.agent
       if (parent === undefined) throw new Error('claude_agent_setup requires a calling agent')
       let saved = ''
-      const persist = async (approval: HumanApproval | undefined): Promise<void> => {
+      const persist = (approval: HumanApproval | undefined): Promise<void> => {
         saved = savePstackPreferences(value, approval)
+        return Promise.resolve()
       }
       let outcome: WidenSessionOutcome
       if (host.widenSession !== undefined) outcome = await host.widenSession(exec, routes, unsaved, persist)
