@@ -17,7 +17,7 @@ description: "claude_agent 的显式模型及档位选择现在要求已记录�
 
 ## 迁移
 
-1. 原生 pstack 可移除仅用于 pstack 的每次启动 `--patch`，无需安装外部插件。启动时若 `$DSH_HOME/pstack/config.json`（默认为 `~/.dsh/pstack/config.json`）不存在，会创建该文件，使用内置资源、继承的角色路由与档位，并启用 session hook。已有偏好（包括外部 `root`）保持不变。请先配置可用的父模型与凭据；DSH 不会自动提供 API key。执行 `setup-pstack`，从现有实时目录选择模型并保存别名与角色。新增别名路由需要通过 `userQuestions` 由用户直接确认：仅选择 `Authorize routes` 才会批准。取消或无法确认时，已保存的偏好保持不变。参见[全局设置](../../../../packages/context/claude-compat/README.zh.md#global-pstack-setup)。
+1. 原生 pstack 可移除仅用于 pstack 的 `--patch` 覆盖层。父级凭据可用时，启动会在 `$DSH_HOME/pstack/config.json` 缺失时创建该文件；已有偏好和外部根目录保持不变。使用 `setup-pstack` 保存角色与目录中的模型别名。新增路由需要通过 `userQuestions` 直接确认，并且仅选择 `Authorize routes`。拒绝或无法确认时不保存。参见[全局设置](../../../../packages/context/claude-compat/README.zh.md#global-pstack-setup)。
 2. 在设置过程中确认显式别名或档位选择需要的精确 provider/model 对，无需手工编辑。Host `subagent-model-selection-settings` 的 `enabled: false` 在查询来源前禁止授权，`enabled: true` 仅使用显式 host 路由，`enabled: null` 则使用注册来源。没有保存的别名或授权时，内置默认配置使用父级路由，不会虚构别名或授予其他模型的访问权限。
 
 3. 设置只对全新的顶层会话生效。经确认的 `claude_agent_setup` 会立即扩大其所在的运行中会话，并注入新的角色表；编辑配置文件不会扩大任何会话。更早启动的子会话和其他已打开的会话保留原有授权；之后启动的子会话继承父级当前的策略。
