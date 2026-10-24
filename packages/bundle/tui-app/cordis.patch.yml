@@ -1,0 +1,7 @@
+- insert:
+    - id: tui-runtime
+      name: '@deepseek-ai/dsh-tui-app'
+      config:
+        mode: terminal
+        startupTimeoutMs: 60000
+        shutdownTimeoutMs: 3000
