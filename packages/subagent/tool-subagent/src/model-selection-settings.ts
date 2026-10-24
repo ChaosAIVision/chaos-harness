@@ -7,7 +7,8 @@ import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent'
 import type { ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
-import { approvalCovers, assertHumanApproval } from './human-approval.ts'
+import { assertHumanApproval } from '@deepseek-ai/dsh-tool-subagent'
+import { approvalCovers } from './human-approval.ts'
 import type { HumanApproval } from './human-approval.ts'
 import {
   mergeRoutes,

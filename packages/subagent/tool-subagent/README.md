@@ -90,6 +90,8 @@ This section explains how the tool mirrors provider lifecycle and settles runs; 
 
 ### Design concept
 
+The package root owns the private human-approval registry. The settings entry imports approval validation from that root, which its bundle keeps external; inlining it would reject approvals minted through the root entry.
+
 One instance is one provider plus one tool name. The plugin registers its definition in the owning composition while the provider is present and disposes it when the provider leaves. Agents inherit that shared definition unless preset selection is configured. A standing composition with preset selection validates references and installs the tool in each matching Agent’s scope before publication. Discovery belongs to the instance configured with `modelDiscovery` and reads the same durable Session policy as the delegation executor. A numeric `maxDepth` or configured LLM selection unsupported by the provider fails the mount. Multiple distinctly named delegation tools may expose model selection in one scope.
 
 ### Activation ownership
