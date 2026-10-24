@@ -111,8 +111,9 @@ kind: "package-reference"
 | [`src/index.ts`](src/index.ts) | 工具注册、提供方生命周期镜像、activation 请求 |
 | [`src/preset-selection.ts`](src/preset-selection.ts) | 配置的 preset 校验、模型白名单与描述引导 |
 | [`src/model-selection.ts`](src/model-selection.ts) | 请求／配置合并与实时 LLM 路由预检 |
-| [`src/model-selection-settings.ts`](src/model-selection-settings.ts) | 为新 Session 读取的宿主所有 opt-in 设置 |
-| [`src/model-selection-state.ts`](src/model-selection-state.ts) | 记录并继承已读取决定的 Session 事件 |
+| [`src/model-selection-settings.ts`](src/model-selection-settings.ts) | 为新 Session 读取的宿主所有 opt-in 设置，以及在人工批准后扩大运行中 Session 的 `widenSession` |
+| [`src/model-selection-state.ts`](src/model-selection-state.ts) | 记录、继承并扩大该决定的 Session 事件与投影；后续条目仅当来自 `setup` 且为后继修订的超集时才被接受 |
+| [`src/human-approval.ts`](src/human-approval.ts) | `HumanApproval`，即人已确认精确路由的凭证；持久化授权与 Session 扩大只接受它 |
 | [`src/list-models.ts`](src/list-models.ts) | `list_subagent_models` 运行时发现工具 |
 
 </details>
