@@ -1,0 +1,20 @@
+# Insert the compatibility plugin into any profile:
+#   dsh --profile web --patch ./packages/experimental/claude-compat/example-overlay.yml
+#
+# `name` is an absolute source path because this package is unpublished and its
+# peer dependencies are `workspace:*`, which a profile install cannot resolve.
+# Once published, the package name works instead.
+- insert:
+    - id: claude-compat
+      name: '/Users/chaos/.local/share/chaos-harness/packages/experimental/claude-compat/src/index.ts'
+      config:
+        roots:
+          - '~/.agents/pstack-plugin'
+        provider: spawn
+        hooks: true
+        # Child LLM routes. Unlisted types inherit the parent route; "*" pins
+        # every type without an exact entry. Most providers advertise `high`.
+        # models:
+        #   '*': { provider: local, model: glm-5.3, reasoningEffort: high }
+        #   'pstack:comment-sicko': { provider: local, model: glm-5.3, reasoningEffort: high }
+        modelSelection: false

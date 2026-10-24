@@ -1,0 +1,67 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/experimental/claude-compat/README.md
+/:
+  en: 32d3169ff111e621
+  zh: 4b4b3a64e6655b84
+/deepseek-ai-dsh-claude-compat:
+  en: 5393d41c924d3694
+  zh: ce2f988a2eb9f99d
+/deepseek-ai-dsh-claude-compat/summary:
+  en: 7955ba290de18cab
+  zh: d46dc93fefe0dfd6
+/deepseek-ai-dsh-claude-compat/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 25a869ade3faf251
+/deepseek-ai-dsh-claude-compat/use-this-package:
+  en: 9ea59cba1eb519f4
+  zh: bca25dcf63146f4d
+/deepseek-ai-dsh-claude-compat/use-this-package/route-a-role-to-a-model-saved-in-the-profile:
+  en: c25b01acb817ba83
+  zh: fe072be5c948f7f6
+/deepseek-ai-dsh-claude-compat/use-this-package/what-the-model-sees:
+  en: 868a981f107fbdcb
+  zh: a5eaa2ddeff74519
+/deepseek-ai-dsh-claude-compat/understand-the-implementation:
+  en: fcfe227aa656564b
+  zh: 27231d326859a54d
+/deepseek-ai-dsh-claude-compat/understand-the-implementation/source-map:
+  en: 08522e084c1d0df1
+  zh: 894a2414725d3f18
+/deepseek-ai-dsh-claude-compat/further-exploration:
+  en: 2900a3eadee32829
+  zh: beb520d366a09f65
+/deepseek-ai-dsh-claude-compat/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-claude-compat/model-experience/tool-catalog-entry:
+  en: 4dd575230071fa4f
+  zh: bf6ff1080f9b3087
+/deepseek-ai-dsh-claude-compat/model-experience/tool-catalog-entry/what-the-model-sees:
+  en: 393114b8c059283e
+  zh: b959cebd68748213
+/deepseek-ai-dsh-claude-compat/model-experience/tool-catalog-entry/token-effect:
+  en: 0dc353c6747d5174
+  zh: d522838cb67a464c
+/deepseek-ai-dsh-claude-compat/model-experience/tool-catalog-entry/kv-cache-effect:
+  en: f161421e4859daee
+  zh: 0bf96b08d03be402
+/deepseek-ai-dsh-claude-compat/model-experience/dispatched-child:
+  en: 85dc3a20af466153
+  zh: 08f2971d7243a4a9
+/deepseek-ai-dsh-claude-compat/model-experience/dispatched-child/what-the-model-sees:
+  en: 9f232e9983736b38
+  zh: f25b8887d3a32aa1
+/deepseek-ai-dsh-claude-compat/model-experience/dispatched-child/token-effect:
+  en: 22f8944d0276e668
+  zh: 4eaf1b6bef1907b3
+/deepseek-ai-dsh-claude-compat/model-experience/dispatched-child/kv-cache-effect:
+  en: 487c30b6f4ee612f
+  zh: 2b8cc0a529696082
+/deepseek-ai-dsh-claude-compat/known-limitations-and-deferred-work:
+  en: 21bce56ba3a89f7b
+  zh: f85ab3d68f500870
+/deepseek-ai-dsh-claude-compat/known-limitations-and-deferred-work/dev-note:
+  en: d6e9f6cfb449a17e
+  zh: 54952d0f18fec2fd
