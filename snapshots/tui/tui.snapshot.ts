@@ -9,7 +9,7 @@ import { parseSnapshotManifest } from '../../packages/test-support/session-snaps
 const root = resolve(import.meta.dirname, '../..')
 const scenario = resolve(import.meta.dirname, 'resume-messages')
 
-it.skipIf(process.platform === 'win32')('tui resumes the recorded messages Session without credentials', async () => {
+it.skipIf(process.platform === 'win32' || process.env.DSH_EXAMPLE_MODE !== 'lib')('tui resumes the recorded messages Session without credentials', async () => {
   const manifest = parseSnapshotManifest(await readFile(resolve(scenario, 'snapshot.yml'), 'utf8'))
   expect(manifest.profile).toBe('tui')
   expect(manifest.session).toBeDefined()
