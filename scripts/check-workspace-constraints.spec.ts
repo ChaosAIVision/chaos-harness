@@ -417,6 +417,21 @@ describe('package payload constraints', () => {
     },
   )
 
+  it('publishes the owned pstack bundle and rejects missing or broader resource payloads', () => {
+    const dir = 'packages/context/claude-compat'
+    const manifest = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), 'utf8')) as WorkspaceManifest['manifest']
+    expect(checkWorkspaceManifest({ dir, manifest })).toEqual([])
+    for (const files of [
+      manifest.files!.filter(file => file !== 'resources/pstack/**'),
+      [...manifest.files!, 'resources/**'],
+    ]) {
+      expect(checkWorkspaceManifest({ dir, manifest: { ...manifest, files } }))
+        .toEqual([expect.stringContaining('package.json files must be')])
+    }
+    expect(expectedDshPackageFiles({ name: '@deepseek-ai/dsh-other-compat' }))
+      .not.toContain('resources/pstack/**')
+  })
+
   it('exempts the private plugin market generator from release rules in its own directory only', () => {
     const dir = 'apps/plugin-market-generator'
     const manifest = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), 'utf8')) as WorkspaceManifest['manifest']
