@@ -11,7 +11,7 @@ const ctx = await harness(root)
 const agent = testAgent(ctx, root, session)
 const { isolation } = await ctx.worktrees.isolate(agent, {}, async (cwd) => {
   if (mode === 'dirty') await writeFile(join(cwd, 'unsaved.txt'), 'work in progress\n')
-  return { result: new Promise<undefined>(() => {}), dispose: async () => {} }
+  return { result: new Promise<undefined>(() => {}) }
 }, () => {})
 process.stdout.write(`${JSON.stringify(isolation)}\n`)
 setInterval(() => {}, 1_000)

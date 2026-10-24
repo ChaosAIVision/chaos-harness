@@ -65,8 +65,8 @@ async function crashable(root: string, mode: 'clean' | 'dirty', session: string)
   }
 }
 
-const finished = async () => ({ result: Promise.resolve(), dispose: async () => {} })
-const hanging = async () => ({ result: new Promise<undefined>(() => {}), dispose: async () => {} })
+const finished = async () => ({ result: Promise.resolve() })
+const hanging = async () => ({ result: new Promise<undefined>(() => {}) })
 
 async function start(root: string, session = 'reaper') {
   ctx = await harness(root)

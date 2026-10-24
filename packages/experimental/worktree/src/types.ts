@@ -79,6 +79,4 @@ export interface LeaseSummary {
 export interface IsolatedActivation {
   /** Settles when the child has stopped writing. Rejection also settles the lease. */
   readonly result: Promise<unknown>
-  /** Stops the child; called when settlement bookkeeping fails to start. */
-  dispose(): Promise<void>
 }

@@ -40,7 +40,7 @@ async function delegate(
   const isolated = await context.worktrees.isolate(agent, request, async (cwd) => {
     started.push(cwd)
     await edit?.(cwd)
-    return { result: Promise.resolve('done'), dispose: async () => {} }
+    return { result: Promise.resolve('done') }
   }, report => kept.push(report))
   const settlement = await isolated.settled
   return { isolated, settlement, kept, started }
@@ -197,7 +197,7 @@ describe('isolating a delegate in a private worktree', () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
     const isolated = await ctx.worktrees.isolate(agent, {}, async () => ({
-      result: Promise.reject(new Error('child crashed')), dispose: async () => {},
+      result: Promise.reject(new Error('child crashed')),
     }), () => {})
     expect(await isolated.settled).toMatchObject({ kind: 'removed' })
     expect(await branches(root)).toBe('')
@@ -229,7 +229,7 @@ describe('isolating a delegate in a private worktree', () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
     const release = Promise.withResolvers<undefined>()
-    const hold = async () => ({ result: release.promise, dispose: async () => {} })
+    const hold = async () => ({ result: release.promise })
     const first = await ctx.worktrees.isolate(agent, {}, hold, () => {})
     const second = await ctx.worktrees.isolate(agent, {}, hold, () => {})
     if (first.isolation.kind !== 'worktree' || second.isolation.kind !== 'worktree') throw new Error('expected worktrees')
@@ -266,7 +266,7 @@ describe('isolating a delegate in a private worktree', () => {
   it('reports Git failures other than "not a repository" instead of degrading', async () => {
     const root = await repo()
     const { ctx, agent } = await start(root, { gitCommand: process.execPath })
-    const idle = async () => ({ result: Promise.resolve(), dispose: async () => {} })
+    const idle = async () => ({ result: Promise.resolve() })
     await expect(ctx.worktrees.isolate(agent, {}, idle, () => {})).rejects.toThrow(/worktree command failed/)
   })
 })
@@ -385,7 +385,7 @@ describe('failures while provisioning and sweeping', () => {
       return spawn(spec)
     })
   }
-  const idle = async () => ({ result: Promise.resolve(), dispose: async () => {} })
+  const idle = async () => ({ result: Promise.resolve() })
 
   it('finishes and removes a half-built lease when checkout fails after the worktree was registered', async () => {
     const root = await repo()
@@ -495,7 +495,7 @@ describe('settlement races and refusals', () => {
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
     const isolated = await ctx.worktrees.isolate(agent, {}, async (cwd) => {
       await writeFile(join(cwd, 'x.txt'), 'x')
-      return { result: Promise.resolve(), dispose: async () => {} }
+      return { result: Promise.resolve() }
     }, () => { throw new Error('inbox closed') })
     expect(await isolated.settled).toMatchObject({ kind: 'kept' })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('inbox closed'))
@@ -507,7 +507,7 @@ describe('settlement races and refusals', () => {
     const kept: KeptReport[] = []
     const isolated = await ctx.worktrees.isolate(agent, {}, async (cwd) => {
       await rm(join(cwd, '.git'))
-      return { result: Promise.resolve(), dispose: async () => {} }
+      return { result: Promise.resolve() }
     }, report => kept.push(report))
     expect(await isolated.settled).toMatchObject({ kind: 'kept', reason: 'removal-refused' })
     expect(kept).toHaveLength(1)
@@ -520,7 +520,7 @@ describe('settlement races and refusals', () => {
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
     const isolated = await ctx.worktrees.isolate(agent, {}, async (cwd) => {
       await rm(join(await git(cwd, 'rev-parse', '--git-common-dir'), 'worktrees', cwd.split('/').at(-1)!, 'gitdir'))
-      return { result: Promise.resolve(), dispose: async () => {} }
+      return { result: Promise.resolve() }
     }, () => {})
     expect(await isolated.settled).toBeUndefined()
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('was not settled'))
