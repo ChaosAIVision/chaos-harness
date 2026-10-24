@@ -6,7 +6,7 @@ import { conversationText as t } from './conversation-locales.ts'
 /** One terminal transcript block, independent of terminal width. */
 export interface TranscriptRow {
   readonly key: string
-  readonly kind: 'user' | 'assistant' | 'reasoning' | 'tool' | 'status'
+  readonly kind: 'user' | 'assistant' | 'reasoning' | 'tool' | 'context' | 'status'
   readonly title: string
   readonly text: string
 }
@@ -70,7 +70,9 @@ export function transcriptRows(entries: readonly SessionEventLikeEntry[], snapsh
         break
       }
       case 'user/message':
-        add(key, 'user', t.you, event.data.content.map(blockText).filter(Boolean).join('\n'))
+        add(key, event.data.source.kind === 'user' ? 'user' : 'context',
+          event.data.source.kind === 'user' ? t.you : t.context,
+          event.data.content.map(blockText).filter(Boolean).join('\n'))
         break
       case 'assistant/message':
         event.data.message.content.forEach((block, index) => {

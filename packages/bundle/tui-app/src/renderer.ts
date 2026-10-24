@@ -169,7 +169,7 @@ export class TerminalRenderer implements Component {
   /** @param width - available terminal columns. @returns the current visible terminal frame. */
   render(width: number): string[] {
     const content = this.rows.flatMap((row) => {
-      const folded = row.kind === 'tool' && !this.toolsExpanded || row.kind === 'reasoning' && !this.reasoningExpanded
+      const folded = row.kind === 'context' || row.kind === 'tool' && !this.toolsExpanded || row.kind === 'reasoning' && !this.reasoningExpanded
       const title = terminalText(`${row.title}${folded ? ` · ${t.folded}` : ''}`)
       const text = terminalText(row.text)
       return [row.kind === 'user' ? accent(title) : bold(title),

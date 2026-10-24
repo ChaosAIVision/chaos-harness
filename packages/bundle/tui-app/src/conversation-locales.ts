@@ -16,6 +16,7 @@ export const conversationText = {
   queue: 'Queue',
   steer: 'Steer',
   you: 'You',
+  context: 'Context · /trajectory for details',
   assistant: 'Assistant',
   reasoning: 'Reasoning',
   tool: 'Tool',

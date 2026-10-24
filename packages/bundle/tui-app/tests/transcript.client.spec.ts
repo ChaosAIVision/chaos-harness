@@ -18,6 +18,17 @@ function user(seq: number, text: string): SessionEvent<'user/message'> {
 }
 
 describe('terminal transcript', () => {
+  it('keeps injected context distinct from human input while preserving its full text', () => {
+    const injected = user(2, 'Runtime context\nFull recorded details')
+    const rows = transcriptRows([
+      { type: 'event', event: user(1, 'Human prompt') },
+      { type: 'event', event: { ...injected, data: { ...injected.data, source: { kind: 'system-prompt' } } } },
+    ], snapshot)
+    expect(rows.map(row => [row.kind, row.text])).toEqual([
+      ['user', 'Human prompt'], ['context', 'Runtime context\nFull recorded details'],
+    ])
+  })
+
   it('follows Client-owned live stream settlement without duplicating the assistant', () => {
     const source = new MutableSessionEventSource()
     const attemptId = LlmAttemptId('attempt')
