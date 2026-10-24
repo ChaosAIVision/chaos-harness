@@ -40,7 +40,7 @@ function llmStub(): NonNullable<CompatHost['llm']> {
   }
 }
 
-function harness(overrides: Partial<Config> = {}, policy?: CompatHost['modelSelectionPolicy'], widenSession?: CompatHost['widenSession']): Harness {
+function harness(overrides: Partial<Config> = {}, policy?: CompatHost['modelSelectionPolicy'], widenSession?: CompatHost['widenSession'], isolateWorktree?: CompatHost['isolateWorktree']): Harness {
   const activations: Activation[] = []
   const hooks: Harness['hooks'] = []
   const contexts: Harness['contexts'] = []
@@ -55,9 +55,10 @@ function harness(overrides: Partial<Config> = {}, policy?: CompatHost['modelSele
     },
     async startActivation(spec) {
       activations.push({ spec })
-      return { childId: 'child-1' }
+      return { childId: 'child-1', result: Promise.resolve(undefined) }
     },
     llm: llmStub(),
+    ...isolateWorktree === undefined ? {} : { isolateWorktree },
     ...widenSession === undefined ? {} : { widenSession },
     injectContext: (_agent, text) => { injected.push(text) },
     ...policy === undefined ? {} : { modelSelectionPolicy: policy },
@@ -516,5 +517,32 @@ describe('claude-compat hooks', () => {
   it('mounts nothing when hooks are disabled', () => {
     const { hooks } = harness({ roots: [root], hooks: false })
     expect(hooks).toEqual([])
+  })
+})
+
+describe('worktree isolation admission', () => {
+  it('hides isolation without its service and denies direct executor requests', async () => {
+    const { tool, activations } = harness()
+    const parameters = tool.parameters as { properties?: Record<string, unknown> }
+    expect(parameters.properties).not.toHaveProperty('isolation')
+    await expect(tool.execute({ ...task, isolation: 'worktree' }, exec as never)).rejects.toThrow('requires the worktree service')
+    expect(activations).toEqual([])
+  })
+
+  it('offers only worktree isolation and passes the source cwd and parent to the capability', async () => {
+    const isolate = vi.fn<NonNullable<CompatHost['isolateWorktree']>>(async (_parent, _cwd, start) => ({
+      activation: await start('/leased/subdir'), description: 'Worktree isolation: /leased/subdir.',
+    }))
+    const { tool, activations } = harness({}, undefined, undefined, isolate)
+    const parameters = tool.parameters as { properties?: Record<string, { enum?: string[] }> }
+    expect(parameters.properties?.isolation?.enum).toEqual(['worktree'])
+    const result = await tool.execute({ ...task, cwd: 'subdir', isolation: 'worktree' }, exec as never)
+    expect(isolate.mock.calls[0]?.[0]).toBe(exec.agent)
+    expect(isolate.mock.calls[0]?.[1]).toBe('subdir')
+    expect(activations[0]?.spec.request.cwd).toBe('/leased/subdir')
+    expect(activations[0]?.spec.delivery).toBe('parent')
+    expect(result).toContain('Worktree isolation: /leased/subdir.')
+    await expect(tool.execute({ ...task, isolation: 'other' }, exec as never)).rejects.toThrow('must be one of')
+    expect(isolate).toHaveBeenCalledTimes(1)
   })
 })

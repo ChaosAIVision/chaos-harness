@@ -124,7 +124,7 @@ describe('home-scoped pstack preferences', () => {
   it('loads the same native mandate and role sheet for unrelated working directories', () => {
     installed()
     const contexts: Array<(child: boolean) => string | undefined> = []
-    const host: CompatHost = { registerTool: () => () => {}, startActivation: async () => ({ childId: 'child' }),
+    const host: CompatHost = { registerTool: () => () => {}, startActivation: async () => ({ childId: 'child', result: Promise.resolve(undefined) }),
       llm: undefined, mountHooks: () => {}, onAgentCreated: (context) => { contexts.push(context) } }
     for (const cwd of ['/unrelated/repo-a', '/another/repo-b']) {
       const spy = vi.spyOn(process, 'cwd').mockReturnValue(cwd)

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
+import WorktreeService from '../src/index.ts'
 import type { Config, IsolateRequest, KeptReport } from '../src/index.ts'
 import { contents, filterCommand, git, harness, repository, testAgent } from './harness.ts'
 
@@ -535,3 +536,49 @@ async function realpathTemp(): Promise<string> {
   roots.push(path)
   return path
 }
+
+describe('service settlement ownership', () => {
+  it.each([false, true])('joins settlement when disposal starts with activation publication pending=%s', async (publishing) => {
+    const root = await repo()
+    const { ctx, agent } = await start(root)
+    const [fiber] = [...ctx.registry.get(WorktreeService)!.fibers]
+    const entered = Promise.withResolvers<undefined>()
+    const publish = Promise.withResolvers<undefined>()
+    const result = Promise.withResolvers<undefined>()
+    const aborted = Promise.withResolvers<undefined>()
+    const ensure = ctx.workingDirectory.ensure.bind(ctx.workingDirectory)
+    vi.spyOn(ctx.workingDirectory, 'ensure').mockImplementationOnce((caller, signal) => {
+      if (signal === undefined) throw new Error('isolation requires cancellation')
+      signal.addEventListener('abort', () => { aborted.resolve(undefined) }, { once: true })
+      return ensure(caller, signal)
+    })
+    const kept: KeptReport[] = []
+    const operation = ctx.worktrees.isolate(agent, {}, async (cwd) => {
+      await writeFile(join(cwd, 'preserved.txt'), 'keep me\n')
+      entered.resolve(undefined)
+      if (publishing) await publish.promise
+      return { result: result.promise }
+    }, report => kept.push(report))
+    await entered.promise
+    if (!publishing) await operation
+    let disposed = false
+    const disposal = fiber!.dispose().then(() => { disposed = true })
+    try {
+      await aborted.promise
+      expect(disposed).toBe(false)
+      publish.resolve(undefined)
+      const isolated = await operation
+      expect(disposed).toBe(false)
+      result.resolve(undefined)
+      await disposal
+      expect(disposed).toBe(true)
+      expect(await isolated.settled).toMatchObject({ kind: 'kept', reason: 'changed' })
+      expect(kept).toHaveLength(1)
+      expect(await contents(join(kept[0]!.path, 'preserved.txt'))).toBe('keep me\n')
+    } finally {
+      publish.resolve(undefined)
+      result.resolve(undefined)
+      await Promise.allSettled([operation, disposal])
+    }
+  })
+})
