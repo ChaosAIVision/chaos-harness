@@ -11,7 +11,6 @@ import { approvalCovers } from './human-approval.ts'
 import type { HumanApproval } from './human-approval.ts'
 import {
   sessionPolicy,
-  subagentModelSelectionPolicy,
   subagentModelSelectionProjectionDefinition,
 } from './model-selection-state.ts'
 import type { SessionRoutePolicy } from './model-selection-state.ts'
@@ -97,12 +96,12 @@ export class SubagentModelSelectionConfig extends Service {
       const policy = await policyReady
       ctx.fiber.assertActive()
       const target = agent.session
-      if (subagentModelSelectionPolicy(policy, target) !== undefined) return
+      if (sessionPolicy(policy, target) !== undefined) return
       let allowedModels: AllowedModelRoute[] | undefined
       const parentId = target.header.origin === 'subagent' ? target.header.parentSession : undefined
       if (parentId !== undefined) {
         const parent = ctx.sessions.get(parentId)
-        if (parent !== undefined) allowedModels = subagentModelSelectionPolicy(policy, parent)
+        if (parent !== undefined) allowedModels = sessionPolicy(policy, parent)?.routes.map(route => ({ ...route }))
       } else if (target.firstLiveSeq === 0
         // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
         && target.eventAt(SessionSeq(0))?.type !== 'session/end-seed') {

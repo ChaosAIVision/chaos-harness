@@ -112,16 +112,3 @@ export function sessionPolicy(
   const state = subagentModelSelectionProjectionHandle.stateOf(session)
   return state === null ? undefined : { revision: state.revision, routes: state.routes.map(route => ({ ...route })) }
 }
-
-/**
- * Read the exact route list authorized for a Session.
- * @param subagentModelSelectionProjectionHandle - registered policy state reader.
- * @param session - session whose durable decision is read.
- * @returns a detached route list, or undefined to restrict selection to the parent route.
- */
-export function subagentModelSelectionPolicy(
-  subagentModelSelectionProjectionHandle: Pick<ProjectionHandle<SessionRoutePolicy | null>, 'stateOf'>,
-  session: Session,
-): AllowedModelRoute[] | undefined {
-  return sessionPolicy(subagentModelSelectionProjectionHandle, session)?.routes.map(route => ({ ...route }))
-}

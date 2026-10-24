@@ -6,7 +6,6 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import type { AllowedModelRoute } from '../src/model-selection.ts'
 import {
   sessionPolicy,
-  subagentModelSelectionPolicy,
   subagentModelSelectionProjectionDefinition as definition,
 } from '../src/model-selection-state.ts'
 import { ownContext } from './harness.ts'
@@ -31,7 +30,7 @@ describe('model-selection policy projection', () => {
     const session = Session.create(SessionId('legacy'))
     session.append('subagent/model-selection-policy', { allowedModels: [A] })
     expect(sessionPolicy(handle, session)).toEqual({ revision: 1, routes: [A] })
-    expect(subagentModelSelectionPolicy(handle, session)).toEqual([A])
+    expect(sessionPolicy(handle, session)?.routes).toEqual([A])
   })
 
   it('accepts a successive superset from setup and exposes the latest', async () => {

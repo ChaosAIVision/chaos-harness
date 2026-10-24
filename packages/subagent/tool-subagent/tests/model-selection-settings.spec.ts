@@ -17,7 +17,7 @@ import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import * as tool from '../src/index.ts'
 import SubagentModelSelectionConfig from '../src/model-selection-settings.ts'
 import {
-  subagentModelSelectionPolicy,
+  sessionPolicy,
   subagentModelSelectionProjectionDefinition,
 } from '../src/model-selection-state.ts'
 import { callSubagent, ownContext, text } from './harness.ts'
@@ -84,7 +84,7 @@ let policySessionCounter = 0
 async function capturePolicy(ctx: Context) {
   const { agent } = await ctx.agents.create({ sessionId: SessionId(`settings-policy-${++policySessionCounter}`) })
   const policy = await ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
-  return subagentModelSelectionPolicy(policy, agent.session)
+  return sessionPolicy(policy, agent.session)?.routes
 }
 
 describe('SubagentModelSelectionConfig', () => {
@@ -122,19 +122,19 @@ describe('SubagentModelSelectionConfig', () => {
     })
     const parent = await createAgent(ctx, 'source-parent')
     const policy = await ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
-    expect(subagentModelSelectionPolicy(policy, parent.session)).toEqual(ALLOWED_MODELS)
+    expect(sessionPolicy(policy, parent.session)?.routes).toEqual(ALLOWED_MODELS)
     expect(parent.session.snapshotEvents().filter(event => event.type === 'subagent/model-selection-policy'))
       .toHaveLength(1)
 
     routes = [{ provider: 'beta', model: 'new-model' }]
     expect(await capturePolicy(ctx)).toEqual(routes)
-    expect(subagentModelSelectionPolicy(policy, parent.session)).toEqual(ALLOWED_MODELS)
+    expect(sessionPolicy(policy, parent.session)?.routes).toEqual(ALLOWED_MODELS)
     const child = await createAgent(ctx, 'source-child', {
       meta: { parentSession: parent.id, origin: 'subagent' },
     })
-    expect(subagentModelSelectionPolicy(policy, child.session)).toEqual(ALLOWED_MODELS)
+    expect(sessionPolicy(policy, child.session)?.routes).toEqual(ALLOWED_MODELS)
     const resumed = await createAgent(ctx, 'source-resumed', { seed: [] })
-    expect(subagentModelSelectionPolicy(policy, resumed.session)).toBeUndefined()
+    expect(sessionPolicy(policy, resumed.session)?.routes).toBeUndefined()
     await source.dispose()
     expect(await capturePolicy(ctx)).toBeUndefined()
     await ctx.fiber.dispose()
@@ -151,7 +151,7 @@ describe('SubagentModelSelectionConfig', () => {
       },
     })
     const policy = await ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
-    expect(subagentModelSelectionPolicy(policy, handle.agent.session)).toEqual(ALLOWED_MODELS)
+    expect(sessionPolicy(policy, handle.agent.session)?.routes).toEqual(ALLOWED_MODELS)
     expect(handle.agent.session.snapshotEvents().filter(event => event.type === 'subagent/model-selection-policy'))
       .toHaveLength(1)
     await ctx.fiber.dispose()
@@ -237,13 +237,13 @@ describe('SubagentModelSelectionConfig', () => {
     const invalid = Session.create(SessionId('empty-policy'))
     invalid.append('subagent/model-selection-policy', { allowedModels: [] })
     const policy = await ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
-    expect(() => subagentModelSelectionPolicy(policy, invalid)).toThrow('requires at least one route')
+    expect(() => sessionPolicy(policy, invalid)?.routes).toThrow('requires at least one route')
 
     const malformed = Session.create(SessionId('malformed-policy'))
     malformed.append('subagent/model-selection-policy', {
       allowedModels: [{ provider: 1, model: 'fast-model' }],
     } as never)
-    expect(() => subagentModelSelectionPolicy(policy, malformed))
+    expect(() => sessionPolicy(policy, malformed)?.routes)
       .toThrow('requires non-empty provider and model ids')
     await ctx.fiber.dispose()
   })
@@ -253,14 +253,14 @@ describe('SubagentModelSelectionConfig', () => {
     const disabled = await createAgent(ctx, 'disabled')
     expect(selectable(ctx, disabled)).toBe(true)
     const policy = await ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
-    expect(subagentModelSelectionPolicy(policy, disabled.session)).toBeUndefined()
+    expect(sessionPolicy(policy, disabled.session)?.routes).toBeUndefined()
 
     await selectionConfigs.get(ctx)!.update({
       enabled: true,
       allowedModels: ALLOWED_MODELS,
     })
     const enabled = await createAgent(ctx, 'enabled')
-    expect(subagentModelSelectionPolicy(policy, enabled.session)).toEqual(ALLOWED_MODELS)
+    expect(sessionPolicy(policy, enabled.session)?.routes).toEqual(ALLOWED_MODELS)
     expect(selectable(ctx, enabled)).toBe(true)
     expect(selectable(ctx, disabled)).toBe(true)
 
@@ -313,8 +313,8 @@ describe('SubagentModelSelectionConfig', () => {
     bindScopeParent(scopeOf(joining.agent.ctx)!, scopeOf(preset.ctx)!)
     ctx.emit(scopeTarget({}, scopeOf(preset.ctx)), 'tools/change')
     const policy = await ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
-    expect(subagentModelSelectionPolicy(policy, joining.agent.session)).toBeUndefined()
-    expect(subagentModelSelectionPolicy(policy, disabled.session)).toBeUndefined()
+    expect(sessionPolicy(policy, joining.agent.session)?.routes).toBeUndefined()
+    expect(sessionPolicy(policy, disabled.session)?.routes).toBeUndefined()
     await ctx.fiber.dispose()
   })
 
@@ -330,8 +330,8 @@ describe('SubagentModelSelectionConfig', () => {
     await selectionConfigs.get(ctx)!.update({ enabled: false })
     await preset.ctx.plugin(tool, { provider: 'spawn', modelSelection: true, modelDiscovery: true })
     const policy = await ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
-    expect(subagentModelSelectionPolicy(policy, inside.agent.session)).toEqual(ALLOWED_MODELS)
-    expect(subagentModelSelectionPolicy(policy, outside.agent.session)).toEqual(ALLOWED_MODELS)
+    expect(sessionPolicy(policy, inside.agent.session)?.routes).toEqual(ALLOWED_MODELS)
+    expect(sessionPolicy(policy, outside.agent.session)?.routes).toEqual(ALLOWED_MODELS)
     await ctx.fiber.dispose()
   })
 
@@ -483,7 +483,7 @@ describe('SubagentModelSelectionConfig', () => {
     })
     expect(selectable(ctx, child)).toBe(true)
     const policy = await ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
-    expect(subagentModelSelectionPolicy(policy, child.session)).toEqual(ALLOWED_MODELS)
+    expect(sessionPolicy(policy, child.session)?.routes).toEqual(ALLOWED_MODELS)
 
     const orphan = await createAgent(ctx, 'orphan', {
       meta: { parentSession: SessionId('missing-parent'), origin: 'subagent' },
@@ -502,11 +502,11 @@ describe('SubagentModelSelectionConfig', () => {
     })
     const resumedEmpty = await createAgent(ctx, 'resumed-empty', { seed: [] })
     expect(selectable(ctx, resumedEmpty)).toBe(true)
-    expect(subagentModelSelectionPolicy(policy, resumedEmpty.session)).toBeUndefined()
+    expect(sessionPolicy(policy, resumedEmpty.session)?.routes).toBeUndefined()
 
     const resumedDisabled = await createAgent(ctx, 'resumed-disabled', { seed: oldSeed.snapshotEvents() })
     expect(selectable(ctx, resumedDisabled)).toBe(true)
-    expect(subagentModelSelectionPolicy(policy, resumedDisabled.session)).toBeUndefined()
+    expect(sessionPolicy(policy, resumedDisabled.session)?.routes).toBeUndefined()
     await ctx.fiber.dispose()
   })
 
