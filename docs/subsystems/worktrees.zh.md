@@ -40,6 +40,107 @@ interface CreatedWorktree {
 }
 ```
 
+## 委派租约
+
+`IsolateRequest` 可选择源目录。`isolate()` 保持父级目录不变，并在租约中相同的仓库相对位置启动委派任务。`Isolation` 区分 worktree 与在调用方目录中运行的降级执行。`IsolatedActivation.result` 表示子任务已停止写入。`Isolated.settled` 在清理和保留报告送达后完成，清算失败时值为 `undefined`。
+
+`Settlement` 区分已移除的租约与由 `KeptReport` 描述的保留检出目录。`KeptReason` 标识已观察到的修改、移除期间出现的修改或被拒绝的移除。`LeaseSummary` 在不修改检出目录的情况下提供所有权与 `LeaseStatus`。包 README 定义[租约保留与恢复规则](../../packages/experimental/worktree/README.zh.md)。
+
+```ts type-equiv
+/** Why a delegate checkout was kept instead of removed. */
+type KeptReason = 'changed' | 'changed-during-removal' | 'removal-refused'
+```
+
+```ts type-equiv
+/** A checkout left on disk for a human to inspect, merge, or delete. */
+interface KeptReport {
+  /** Absolute checkout directory in the filesystem provider's execution world. */
+  path: string
+  /** Lease branch, still present. */
+  branch: string
+  /** Commit the checkout was created from. */
+  baseCommit: string
+  /** Commit the checkout's HEAD pointed at when it was settled. */
+  headCommit: string
+  /** Whether tracked changes, untracked files, or ignored files other than `node_modules` were present. */
+  uncommitted: boolean
+  /** The observation that prevented removal. */
+  reason: KeptReason
+}
+```
+
+```ts type-equiv
+/** Outcome of settling one lease. */
+type Settlement = { kind: 'removed'; branch: string } | ({ kind: 'kept' } & KeptReport)
+```
+
+```ts type-equiv
+/** Where an isolated child runs. */
+type Isolation =
+  | {
+    kind: 'worktree'
+    /** Lease checkout root. */
+    path: string
+    /** Directory the child starts in: the lease path plus the caller's offset inside its repository. */
+    cwd: string
+    branch: string
+    baseCommit: string
+    /** Human-readable origin of the base, such as `origin/main` or `HEAD (no origin/HEAD)`. */
+    baseLabel: string
+  }
+  | {
+    kind: 'degraded'
+    /** The caller's directory, unchanged. */
+    cwd: string
+    reason: string
+  }
+```
+
+```ts type-equiv
+/** Result of starting a delegate in a lease. */
+interface Isolated<T extends IsolatedActivation> {
+  /** The value returned by the caller's start function. */
+  activation: T
+  isolation: Isolation
+  /** Resolves after settlement and kept-report delivery; never rejects. Undefined when settlement failed. */
+  settled: Promise<Settlement | undefined>
+}
+```
+
+```ts type-equiv
+/** Lease liveness as seen from this host. */
+type LeaseStatus = 'live' | 'dead' | 'foreign' | 'kept' | 'unowned' | 'missing'
+```
+
+```ts type-equiv
+/** One lease worktree as listed to humans and the reaper. */
+interface LeaseSummary {
+  /** Checkout directory; absent for a lease branch whose worktree is gone. */
+  path?: string
+  branch: string
+  status: LeaseStatus
+  /** Owning Session id; absent when the metadata file is missing. */
+  ownerSession: string | undefined
+  baseCommit: string | undefined
+}
+```
+
+```ts type-equiv
+/** A child execution whose end triggers settlement. */
+interface IsolatedActivation {
+  /** Settles when the child has stopped writing. Rejection also settles the lease. */
+  readonly result: Promise<unknown>
+}
+```
+
+```ts type-equiv
+/** Per-call options of {@link WorktreeService.isolate}. */
+interface IsolateRequest {
+  /** Source repository directory; relative paths resolve against the agent's current directory. Omission uses that directory. */
+  cwd?: string
+}
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -52,7 +153,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.worktrees` — `WorktreeService`
 
-Creates retained Git worktrees under the mounted filesystem and sandbox providers.
+Creates retained Git worktrees and settled delegate leases under the mounted filesystem and sandbox providers.
 
 ```ts cordis-catalog
 /**
@@ -68,6 +169,40 @@ Creates retained Git worktrees under the mounted filesystem and sandbox provider
  * @returns canonical checkout path, branch name, pinned commit, and source repository root.
  */
 async create(agent: Agent, request: CreateWorktreeRequest = {}, signal?: AbortSignal): Promise<CreatedWorktree>
+
+/**
+ * Run a delegate in a private worktree and settle it when the delegate stops.
+ * The caller's working directory never changes. A clean checkout is removed with its branch; one with
+ * edits, ignored files other than `node_modules`, commits, a stash entry, or a moved HEAD is kept and
+ * reported through `onKept`. Outside a Git work tree, or in a repository without commits, the delegate
+ * runs in the caller's directory and `isolation` says why. Leases whose owning process died are settled
+ * first. A lease owned by a live process, or by another host, is never touched.
+ * @param agent - caller whose Session selects the file policy and owns the lease.
+ * @param request - optional source directory.
+ * @param start - starts the delegate in the directory it must use and returns its activation.
+ * @param onKept - receives each checkout this call or a previous crashed run of this Session left behind; failures are logged.
+ * @param signal - cancellation of provisioning only; settlement always runs to completion.
+ * @returns the activation, where it runs, and a promise for the settlement.
+ */
+async isolate<T extends IsolatedActivation>( agent: Agent, request: IsolateRequest, start: (cwd: string) => Promise<T>, onKept: (report: KeptReport) => void, signal?: AbortSignal, ): Promise<Isolated<T>>
+
+/**
+ * Settle every lease in the caller's repository whose owning process has died.
+ * Clean checkouts are removed; checkouts with changes become kept and stay for a human.
+ * Safe to repeat and to run concurrently with other processes.
+ * @param agent - caller whose current directory selects the repository and file policy.
+ * @param signal - cancellation of the sweep.
+ * @returns the leases settled by this call; empty outside a Git work tree.
+ */
+async reap(agent: Agent, signal?: AbortSignal): Promise<Settlement[]>
+
+/**
+ * List delegate leases in the caller's repository without changing anything.
+ * @param agent - caller whose current directory selects the repository and file policy.
+ * @param signal - cancellation of the listing.
+ * @returns one summary per lease worktree or orphaned lease branch; empty outside a Git work tree.
+ */
+async list(agent: Agent, signal?: AbortSignal): Promise<LeaseSummary[]>
 ```
 
 Types: [Agent](core.zh.md)
