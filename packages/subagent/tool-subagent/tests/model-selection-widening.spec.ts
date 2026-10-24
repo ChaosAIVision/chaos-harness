@@ -244,6 +244,16 @@ describe('SubagentModelSelectionConfig.widenSession', () => {
     expect(entries(agent)).toHaveLength(0)
   })
 
+  it('refuses to widen a policy-less Session whose parent route is unknown', async () => {
+    const { ctx, create } = await boot(null)
+    const agent = await create()
+    const recorded = steps('yes')
+
+    await expect(ctx.subagentModelSelection.widenSession(agent, [B], recorded, signal))
+      .rejects.toThrow('parent provider and model are unknown')
+    expect(recorded.asked).toEqual([])
+  })
+
   it('refuses to widen when the operator disables model selection', async () => {
     const { ctx, create, config } = await boot()
     const agent = await create()

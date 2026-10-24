@@ -83,7 +83,8 @@ export class SubagentModelSelectionConfig extends Service {
   })
 
   private readonly sources = new Set<AllowedModelsSource>()
-  private policyHandle: ProjectionHandle<SessionRoutePolicy | null> | undefined
+  /** Set by `[Service.init]` before the service is published. */
+  private policyHandle!: ProjectionHandle<SessionRoutePolicy | null>
 
   constructor(ctx: Context, private config: Config) {
     super(ctx, 'subagentModelSelection')
@@ -148,7 +149,6 @@ export class SubagentModelSelectionConfig extends Service {
     signal: AbortSignal,
   ): Promise<WidenSessionOutcome> {
     const handle = this.policyHandle
-    if (handle === undefined) throw new Error('subagent model selection is not initialized')
     if (this.config.enabled.get() === false) {
       throw new Error('subagent model selection is disabled by the operator setting; routes cannot be widened')
     }
