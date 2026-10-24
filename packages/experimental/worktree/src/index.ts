@@ -11,7 +11,7 @@ import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { PREPARE_DIRECTORY, WRITE_FILE } from './directory.ts'
-import { classify, decide, decideOrphan, isLeaseBranch, LEASE_PREFIX, parseLeaseFile, parseStatus, parseWorktreeList, reapAction, stashedFrom } from './lease.ts'
+import { classify, decide, decideOrphan, isLeaseBranch, isReservedName, LEASE_PREFIX, parseLeaseFile, parseStatus, parseWorktreeList, reapAction, stashedFrom } from './lease.ts'
 import type { Inspection, LeaseFile } from './lease.ts'
 import { currentOwner, HOST, ownerAlive } from './owner.ts'
 import { runCommand } from './process.ts'
@@ -131,7 +131,7 @@ export class WorktreeService extends Service {
     if (!relativePath(`${this.config.namePrefix}name`) || this.config.namePrefix.startsWith('-')) {
       throw new Error('worktree: namePrefix must produce a relative branch name')
     }
-    if (isLeaseBranch(`${this.config.namePrefix}name`)) throw new Error(`worktree: namePrefix must not use the reserved ${LEASE_PREFIX} namespace`)
+    if (isReservedName(`${this.config.namePrefix}name`)) throw new Error(`worktree: namePrefix must not use the reserved ${LEASE_PREFIX} namespace`)
     for (const key of ['gitCommand', 'nodeCommand'] as const) {
       if (this.config[key].trim().length === 0) throw new Error(`worktree: ${key} must not be empty`)
     }
@@ -173,7 +173,7 @@ export class WorktreeService extends Service {
   private resolve(request: CreateWorktreeRequest): WorktreeSpec {
     const branch = request.name ?? `${this.config.namePrefix}${randomUUID()}`
     if (!relativePath(branch) || branch.startsWith('-')) throw new Error('worktree name must be a relative Git branch name')
-    if (isLeaseBranch(branch)) throw new Error(`worktree name must not use the reserved ${LEASE_PREFIX} namespace`)
+    if (isReservedName(branch)) throw new Error(`worktree name must not use the reserved ${LEASE_PREFIX} namespace`)
     const revision = request.from ?? 'HEAD'
     if (revision.length === 0) throw new Error('worktree from must name a local commit, branch, or tag')
     return { branch, revision }
@@ -548,7 +548,7 @@ export class WorktreeService extends Service {
 
   /** Compare-and-delete: Git deletes the ref only while it still has the expected value. */
   private async deleteBranch(git: GitContext, root: string, branch: string, expected: string): Promise<void> {
-    await git.git(root, ['update-ref', '-d', `refs/heads/${branch}`, expected], [0, 1, 128])
+    await git.git(root, ['update-ref', '-d', '--end-of-options', `refs/heads/${branch}`, expected], [0, 1, 128])
   }
 
   /** Settle a lease this process owns once its delegate stopped. Failures are logged and left for the reaper. */

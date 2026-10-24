@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classify, decide, decideOrphan, formatKept, isLeaseBranch, parseLeaseFile, parseStatus, parseWorktreeList, reapAction, stashedFrom } from '../src/lease.ts'
+import { classify, decide, decideOrphan, formatKept, isLeaseBranch, isReservedName, parseLeaseFile, parseStatus, parseWorktreeList, reapAction, stashedFrom } from '../src/lease.ts'
 import type { Inspection, LeaseFile } from '../src/lease.ts'
 
 const file: LeaseFile = {
@@ -73,6 +73,7 @@ describe('parseLeaseFile', () => {
   it('round-trips a valid record', () => {
     expect(parseLeaseFile(JSON.stringify(file))).toEqual(file)
     expect(parseLeaseFile(JSON.stringify({ ...file, ownerStart: null }))?.ownerStart).toBeNull()
+    expect(parseLeaseFile(JSON.stringify({ ...file, baseCommit: 'a'.repeat(64) }))?.baseCommit).toBe('a'.repeat(64))
   })
   it.each([
     ['not json', '{'],
@@ -82,6 +83,15 @@ describe('parseLeaseFile', () => {
     ['non-string state', JSON.stringify({ ...file, state: 1 })],
     ['missing branch', JSON.stringify({ ...file, branch: undefined })],
     ['bad base', JSON.stringify({ ...file, baseCommit: 3 })],
+    ['option-shaped base', JSON.stringify({ ...file, baseCommit: '--hard' })],
+    ['abbreviated base', JSON.stringify({ ...file, baseCommit: 'abc1234' })],
+    ['symbolic base', JSON.stringify({ ...file, baseCommit: 'HEAD' })],
+    ['uppercase base', JSON.stringify({ ...file, baseCommit: 'B'.repeat(40) })],
+    ['branch outside the lease namespace', JSON.stringify({ ...file, branch: 'main' })],
+    ['option-shaped branch', JSON.stringify({ ...file, branch: '--force' })],
+    ['branch with a traversal segment', JSON.stringify({ ...file, branch: 'dsh/lease/../main' })],
+    ['branch with a space', JSON.stringify({ ...file, branch: 'dsh/lease/a b' })],
+    ['bare namespace', JSON.stringify({ ...file, branch: 'dsh/lease/' })],
     ['bad pid', JSON.stringify({ ...file, ownerPid: 1.5 })],
     ['bad time', JSON.stringify({ ...file, createdAtMs: 'x' })],
     ['bad start', JSON.stringify({ ...file, ownerStart: 4 })],
@@ -139,5 +149,14 @@ describe('stashedFrom', () => {
     expect(stashedFrom(subjects, 'dsh/lease/a')).toBe(true)
     expect(stashedFrom('WIP on dsh/lease/ab: x', 'dsh/lease/a')).toBe(false)
     expect(stashedFrom('', 'dsh/lease/a')).toBe(false)
+  })
+})
+
+describe('isReservedName', () => {
+  it.each([
+    ['dsh', true], ['dsh/lease', true], ['dsh/lease/x', true], ['dsh/lease/x/y', true],
+    ['dsh/other', false], ['dsh-lease', false], ['dsh/leases', false], ['topic', false],
+  ] as const)('%s -> %s', (name, expected) => {
+    expect(isReservedName(name)).toBe(expected)
   })
 })

@@ -22,6 +22,9 @@ export interface LeaseFile {
   createdAtMs: number
 }
 
+const COMMIT_ID = /^[0-9a-f]{40,64}$/
+const LEASE_BRANCH = /^dsh\/lease\/[A-Za-z0-9][A-Za-z0-9_-]*$/
+
 const STATES: readonly LeaseState[] = ['provisioning', 'held', 'settling', 'kept']
 
 function isLeaseState(value: string): value is LeaseState {
@@ -31,7 +34,7 @@ function isLeaseState(value: string): value is LeaseState {
 /**
  * Parse lease metadata read from disk.
  * @param text - file contents.
- * @returns the record, or undefined when the text is not a version 1 lease file.
+ * @returns the record, or undefined when the text is not a version 1 lease file with a full object id and a lease-namespace branch.
  */
 export function parseLeaseFile(text: string): LeaseFile | undefined {
   let value: unknown
@@ -47,6 +50,7 @@ export function parseLeaseFile(text: string): LeaseFile | undefined {
   if (v !== 1 || typeof state !== 'string' || !isLeaseState(state)) return undefined
   if (typeof branch !== 'string' || typeof ownerSession !== 'string' || typeof ownerHost !== 'string') return undefined
   if (typeof baseCommit !== 'string' || typeof baseLabel !== 'string') return undefined
+  if (!COMMIT_ID.test(baseCommit) || !LEASE_BRANCH.test(branch)) return undefined
   if (typeof ownerPid !== 'number' || !Number.isSafeInteger(ownerPid)) return undefined
   if (typeof createdAtMs !== 'number' || !Number.isSafeInteger(createdAtMs)) return undefined
   if (ownerStart !== null && typeof ownerStart !== 'string') return undefined
@@ -184,6 +188,15 @@ export function parseWorktreeList(output: string): WorktreeEntry[] {
  */
 export function isLeaseBranch(branch: string): boolean {
   return branch.startsWith(LEASE_PREFIX)
+}
+
+/**
+ * Whether a requested branch name collides with the lease namespace. `dsh` and `dsh/lease` are reserved too:
+ * as branch names they would block every `dsh/lease/<id>` ref by a file-versus-directory conflict.
+ * @param name - requested branch name.
+ */
+export function isReservedName(name: string): boolean {
+  return name === 'dsh' || name === 'dsh/lease' || isLeaseBranch(name)
 }
 
 /**

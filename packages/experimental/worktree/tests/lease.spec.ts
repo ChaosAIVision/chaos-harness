@@ -315,10 +315,21 @@ describe('reserved lease namespace', () => {
   it('refuses explicit and generated names inside it', async () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
-    await expect(ctx.worktrees.create(agent, { name: 'dsh/lease/mine' })).rejects.toThrow(/reserved dsh\/lease\//)
+    for (const name of ['dsh/lease/mine', 'dsh/lease', 'dsh']) {
+      await expect(ctx.worktrees.create(agent, { name })).rejects.toThrow(/reserved dsh\/lease\//)
+    }
     expect(ctx.workingDirectory.get(agent.session)).toBe(root)
     await ctx.fiber.dispose()
     await expect(harness(root, { namePrefix: 'dsh/lease/' })).rejects.toThrow(/reserved dsh\/lease\//)
+  })
+
+  it('keeps lease provisioning possible next to a retained worktree named dsh-something', async () => {
+    const root = await repo()
+    const { ctx, agent } = await start(root, { baseRef: 'head' })
+    await ctx.worktrees.create(agent, { name: 'dsh-topic' })
+    await ctx.worktrees.create(agent, { name: 'dsh/other' })
+    const { settlement } = await delegate(ctx, agent)
+    expect(settlement).toMatchObject({ kind: 'removed' })
   })
 
   it('still creates retained worktrees that move the caller directory', async () => {
