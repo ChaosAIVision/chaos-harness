@@ -58,11 +58,11 @@ function seedConfig(update: Record<string, unknown>): void {
   writeFileSync(pstackConfigPath(), JSON.stringify({ ...base, ...update }))
 }
 
-async function boot(withHuman = true) {
+async function boot(withHuman = true, enabled: boolean | null = null) {
   const ctx = new Context()
   ctxs.push(ctx)
   await mountAgentLoopTestDependencies(ctx)
-  await ctx.plugin(SubagentModelSelectionConfig, { enabled: null, allowedModels: [] })
+  await ctx.plugin(SubagentModelSelectionConfig, { enabled, allowedModels: [] })
   await ctx.plugin(AgentLoop, { agents: [] })
   await mountWorkingDirectoryFixture(ctx)
   await liveConfig(ctx, SubagentRuntime)
@@ -178,6 +178,43 @@ describe('claude_agent_setup in a running Session', () => {
     expect(await dispatchBlocked('big')).toBe(true)
     expect((await discover()).aliases).toEqual([expect.objectContaining({ alias: 'fast', allowed: true }), expect.objectContaining({ alias: 'big', allowed: false })])
     expect(policyEntries(agent)).toHaveLength(1)
+  })
+
+  it('saves a roles-only change when the operator setting is disabled', async () => {
+    seedConfig({ modelAliases: {}, allowedModels: [] })
+    const { agent, human, setup } = await boot(true, false)
+
+    const result = await setup({ roles: { 'bug-fix': 'inherit-parent' } })
+
+    expect(result.isError).toBe(false)
+    expect(human!.asked).toEqual([])
+    expect(policyEntries(agent)).toHaveLength(0)
+    expect(loadPstackPreferences().roles['bug-fix']).toBe('inherit-parent')
+  })
+
+  it('saves a roles-only change for an alias on the parent route when the operator setting is disabled', async () => {
+    const parentRoute = { provider: 'mock', model: 'mock' }
+    seedConfig({ modelAliases: { same: parentRoute }, allowedModels: [parentRoute] })
+    const { human, setup } = await boot(true, false)
+
+    const result = await setup({ roles: { 'bug-fix': 'same' } })
+
+    expect(result.isError).toBe(false)
+    expect(human!.asked).toEqual([])
+    expect(loadPstackPreferences().roles['bug-fix']).toBe('same')
+  })
+
+  it('still refuses to widen when the operator setting is disabled', async () => {
+    seedConfig({ modelAliases: { fast: A }, allowedModels: [A] })
+    const { agent, human, setup } = await boot(true, false)
+    const before = readFileSync(pstackConfigPath(), 'utf8')
+
+    const result = await setup({ roles: { 'bug-fix': 'fast' } })
+
+    expect(result.isError).toBe(true)
+    expect(human!.asked).toEqual([])
+    expect(policyEntries(agent)).toHaveLength(0)
+    expect(readFileSync(pstackConfigPath(), 'utf8')).toBe(before)
   })
 
   it('rejects allowedModels from the model before asking anyone', async () => {

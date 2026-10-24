@@ -139,7 +139,8 @@ export class SubagentModelSelectionConfig extends Service {
    * @param signal - cancellation for the whole operation.
    * @returns `unchanged` when the Session already allows every route and `unsaved` is empty (persist still runs without a proof),
    *   `widened` with the new revision after an appended entry, or `declined` when no proof was given.
-   * @throws when the operator setting is `enabled: false`, when a Session without a policy has no parent route, when
+   * @throws when routes need confirmation while the operator setting is `enabled: false`, when a Session without a policy
+   *   has no parent route, when
    *   the proof does not cover the missing routes, or when `persist` or the signal rejects.
    */
   async widenSession(
@@ -149,9 +150,6 @@ export class SubagentModelSelectionConfig extends Service {
     signal: AbortSignal,
   ): Promise<WidenSessionOutcome> {
     const handle = this.policyHandle
-    if (this.config.enabled.get() === false) {
-      throw new Error('subagent model selection is disabled by the operator setting; routes cannot be widened')
-    }
     assertAllowedModelRoutes(routes)
     const parentRoutes = (): AllowedModelRoute[] => {
       const { provider, model } = parentAgentOptionsForDelegation(agent)
@@ -175,6 +173,9 @@ export class SubagentModelSelectionConfig extends Service {
     if (confirm.size === 0) {
       await steps.persist(undefined)
       return { kind: 'unchanged', revision: before.revision }
+    }
+    if (this.config.enabled.get() === false) {
+      throw new Error('subagent model selection is disabled by the operator setting; routes cannot be widened')
     }
     const approval = await steps.ask([...confirm.values()])
     if (approval === undefined) return { kind: 'declined' }
