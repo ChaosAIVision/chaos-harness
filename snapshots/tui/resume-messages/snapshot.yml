@@ -1,0 +1,10 @@
+version: 1
+scenario: resume-messages
+profile: tui
+composition: web-default
+recording: live
+platform: posix
+header:
+  class: web-default
+session:
+  source: ../../web/deepseek-messages-chat/session.v4.jsonl
