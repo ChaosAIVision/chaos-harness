@@ -19,6 +19,7 @@ import { bindScopeParent, createScope, scopeOf } from '@deepseek-ai/dsh-scope'
 import SubagentModelSelectionConfig from '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
 import { MockAdapter } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import * as compat from '../src/index.ts'
+import { configProcess } from './pstack-process.ts'
 import { loadPstackPreferences, pstackConfigPath } from '../src/index.ts'
 
 type Answer = 'Authorize routes' | 'Cancel'
@@ -26,11 +27,13 @@ type Answer = 'Authorize routes' | 'Cancel'
 class ScriptedHuman extends Service {
   readonly asked: string[] = []
   answer: Answer = 'Authorize routes'
+  beforeAnswer: (() => Promise<void>) | undefined
 
   constructor(ctx: Context) { super(ctx, 'userQuestions') }
 
   async ask(request: { questions: Array<{ id: string; question: string }> }) {
     this.asked.push(request.questions[0]!.question)
+    await this.beforeAnswer?.()
     return { answers: [{ id: request.questions[0]!.id, selected: [this.answer] }] }
   }
 }
@@ -125,6 +128,48 @@ describe('claude_agent_setup in a running Session', () => {
     expect(sheets[0]!.digest).not.toBe(found.sheetDigest)
     expect(sheets[1]!.seq).toBeGreaterThan(policyEntries(agent)[1]!.seq)
     expect(loadPstackPreferences().allowedModels).toEqual([A, B])
+  })
+
+  it.each(['alias', 'role', 'root', 'grants'])('rejects a stale approved edit after another process changes %s', async (field) => {
+    seedConfig({ modelAliases: { fast: A, big: B }, allowedModels: [A] })
+    const { agent, human, setup, text } = await boot()
+    const beforeEvents = agent.session.snapshotEvents().length
+    let winner = ''
+    human!.beforeAnswer = async () => {
+      const child = configProcess(`
+        import { writeFileSync } from 'node:fs';
+        const current = config.loadPstackPreferences();
+        const field = ${JSON.stringify(field)};
+        if (field === 'alias') current.modelAliases.big = { provider: 'beta', model: 'changed' };
+        if (field === 'role') current.roles.review2 = 'fast';
+        if (field === 'root') current.root = '/operator/changed-root';
+        if (field === 'grants') current.allowedModels.push({ provider: 'operator', model: 'added' });
+        writeFileSync(config.pstackConfigPath(), JSON.stringify(current));
+      `)
+      await child.done
+      winner = readFileSync(pstackConfigPath(), 'utf8')
+    }
+    const result = await setup({ roles: { 'bug-fix': 'big' } })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('changed during setup')
+    expect(human!.asked).toHaveLength(1)
+    expect(policyEntries(agent)).toHaveLength(1)
+    expect(readFileSync(pstackConfigPath(), 'utf8')).toBe(winner)
+    expect(agent.session.snapshotEvents().slice(beforeEvents).some(event => JSON.stringify(event).includes('supersedes every earlier role sheet'))).toBe(false)
+  })
+
+  it('does not ask for unused catalog aliases or unrelated roles during one-role and control edits', async () => {
+    seedConfig({ modelAliases: { fast: A, big: B, unavailable: { provider: 'missing', model: 'unavailable' } },
+      roles: { unchanged: 'fast' }, allowedModels: [] })
+    const { human, setup } = await boot()
+    expect((await setup({ sessionHook: false })).isError).toBe(false)
+    expect(human!.asked).toEqual([])
+    expect((await setup({ roles: { review2: 'big' } })).isError).toBe(false)
+    expect(human!.asked).toHaveLength(1)
+    expect(human!.asked[0]).toContain('beta/big')
+    expect(human!.asked[0]).not.toContain('alpha/fast')
+    expect(human!.asked[0]).not.toContain('missing/unavailable')
+    expect(loadPstackPreferences().allowedModels).toEqual([B])
   })
 
   it('grants nothing when a shell edit of config.json is followed by a roles-only setup call', async () => {

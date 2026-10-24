@@ -56,13 +56,19 @@ Claude Code 插件声明了三件 Harness 没有直接对应物的事情：以 `
 <a id="global-pstack-setup"></a>
 ### 全局 pstack 设置
 
-原生 profile 随 DSH 提供 pstack skill 与 agent 声明，无需安装外部插件、传入 `--patch` 或使用项目本地配置。启动时，DSH 会在 `$DSH_HOME/pstack/config.json` 不存在时创建该文件；`DSH_HOME` 默认为 `~/.dsh`。文件中的绝对路径 `root` 指向内置资源。已有文件保留其配置的外部根目录与偏好；这些路径不依赖工作目录。
+原生 profile 随 DSH 提供 pstack skill 与 agent 声明，无需安装外部插件、传入 `--patch` 或使用项目本地配置。启动时，DSH 会在 `$DSH_HOME/pstack/config.json` 不存在时创建该文件；`DSH_HOME` 默认为 `~/.dsh`。省略 `root` 时使用已安装包中的内置资源。已有文件保留其配置的外部根目录与偏好；这些路径不依赖工作目录。
 
 内置资源的[引入清单](resources/pstack/upstream.json) 记录上游版本、来源归属、文件校验和，以及保留的许可证与声明文件。
 
-首次使用时，请让 agent 执行 `setup-pstack`。它使用 `claude_agent_models` 发现 provider/model id 及模型支持的档位，询问你希望使用哪些模型，然后调用 `claude_agent_setup`，将包含 `modelAliases` 和 `roles` 的 JSON 字符串作为 `preferences_json` 传入，还可提供 `defaultEffort` 和 `sessionHook`。如果不需要额外模型路由，可保留继承角色。对于新增别名路由，host 通过 `userQuestions` 请求用户直接确认：仅选择 `Authorize routes` 才会将这些路由保存到 `allowedModels`。取消或无法确认时，已保存的偏好保持不变。每次调用 `claude_agent` 和 `claude_agent_models` 都会重新读取别名。确认保存后，当前会话立即持有新路由：其策略修订号加一，且 `claude_agent_setup` 会注入一份取代此前所有角色表的新角色表。一次提问涵盖已保存偏好或本会话尚未包含的全部路由；两者都已包含的路由无需提问。授权只来自该回答。手工编辑 `config.json`（包括经由模型的 shell）不会改变运行中的会话。这一边界针对的是模型的工具调用：拥有 shell 权限的模型仍可编辑自己的会话日志，这与在新会话启动前编辑 `config.json` 属同一类，本处的检查无法阻止能够写入你文件的行为者。更早启动的子 agent 和其他已打开的会话保持原有授权，之后启动的子 agent 继承扩大后的集合。注入的角色表是模型上下文，压缩可能将其摘要，恢复会话时会以新表替换；`claude_agent_models` 返回当前的 `roles`、`defaultEffort`、`policyRevision` 和 `sheetDigest`，并以此为准。显式 profile 别名优先于保存的别名。更新插件代码本身时，如果未启用代码热重载，仍需重新加载插件或重启 host；实时读取偏好不会重新加载代码。
+首次使用时，请让 agent 执行 `setup-pstack`。它使用 `claude_agent_models` 发现 provider/model id 及模型支持的档位，询问你希望使用哪些模型，然后调用 `claude_agent_setup`，将包含 `modelAliases` 和 `roles` 的 JSON 字符串作为 `preferences_json` 传入，还可提供 `removeModelAliases`、`defaultEffort` 和 `sessionHook`。如果不需要额外模型路由，可保留继承角色。对于新增别名路由，host 通过 `userQuestions` 请求用户直接确认：仅选择 `Authorize routes` 才会将这些路由保存到 `allowedModels`。取消或无法确认时，已保存的偏好保持不变。每次调用 `claude_agent` 和 `claude_agent_models` 都会重新读取别名。确认保存后，当前会话立即持有新路由：其策略修订号加一，且 `claude_agent_setup` 会注入一份取代此前所有角色表的新角色表。一次提问涵盖显式新增或更新的别名、显式修改的角色所选择且已保存偏好或本会话尚未包含的路由；两者都已包含的路由无需提问。授权只来自该回答。手工编辑 `config.json`（包括经由模型的 shell）不会改变运行中的会话。这一边界针对的是模型的工具调用：拥有 shell 权限的模型仍可编辑自己的会话日志，这与在新会话启动前编辑 `config.json` 属同一类，本处的检查无法阻止能够写入你文件的行为者。更早启动的子 agent 和其他已打开的会话保持原有授权，之后启动的子 agent 继承扩大后的集合。注入的角色表是模型上下文，压缩可能将其摘要，恢复会话时会以新表替换；`claude_agent_models` 返回当前的 `roles`、`defaultEffort`、`sessionHook`、`policyRevision` 和 `sheetDigest`，并以此为准。显式 profile 别名优先于保存的别名。更新插件代码本身时，如果未启用代码热重载，仍需重新加载插件或重启 host；实时读取偏好不会重新加载代码。
 
-生成的文件没有别名或额外授权路由。所有内置角色继承父模型，多成员面板保留各自独立的继承条目，`defaultEffort` 为 `session`，`sessionHook` 为 `true`。模型设置完成前，委派继承父路由，不会虚构别名。偏好无效或配置的根目录缺少指令文件时会失败，而非静默回退。
+首次启动时，若偏好文件不存在，会从可用提供者目录生成别名，但不会添加授权。唯一、安全且未被 profile 别名占用的模型 ID 保留原始拼写。其他路由使用可读的提供者及模型名称加稳定哈希；不会覆盖目录或 profile 中已有的名称。所有内置角色继承父模型，多成员面板保留各自独立的继承条目，`defaultEffort` 为 `session`，`sessionHook` 为 `true`。没有目录方法的 host 和同步冷启动读取器会发布空别名。并发初始化采用先写入者胜出，因此同步读取器可能在目录发现完成前发布空默认值。已有文件（包括显式空别名和此前的删除）在重启时保持不变。目录发现失败不会创建偏好文件。偏好无效或配置的根目录缺少指令文件时会明确失败。
+
+设置仅选择新增或更新的别名及显式修改的角色，并应用 profile 覆盖。只修改控制项不会选择路由，未使用的目录别名无需批准或实时能力检查。所有结果角色都必须引用已保存的有效别名；profile 覆盖不会复制到已保存别名中。`removeModelAliases` 删除不重复的别名名称，拒绝与新增或更新重叠的名称和悬空角色引用，并保留历史路由授权。再次删除已不存在且未被引用的别名会成功。JSON 和旧式模型表均接受 `review2` 等含数字的角色名称。
+
+设置在校验与用户确认前捕获独立的编辑内容、目标文件名、当前偏好和选定的精确路由。保存持有写锁并拒绝已变化的快照，要求重新发现、设置和确认。保存失败不会发布会话授权。并发的独立编辑可能冲突；从最新发现结果重试被拒绝的编辑会保留先前提交。
+
+原生设置将上游步骤 1 至 7 映射为发现、用户选择模型、别名与角色映射、session hook 选择、实时档位检查、通过 `preferences_json` 调用 `claude_agent_setup`，以及自动注入角色表。原生设置不会编辑模型表文件或 `AGENTS.md`。
 
 DSH 不会自动提供 API key 或服务商账号。启动会话前，请配置可用的父模型与服务商凭据；设置流程发现现有实时模型目录，不会安装服务商或验证凭据。
 
@@ -116,7 +122,7 @@ models:
 
 ### Agent 类型与 skill
 
-所有 pstack `Agent` 调用都使用 `claude_agent`，包括通用面板成员，不要与标准 `subagent` 工具混用。通用任务可省略 `subagent_type`，或使用 `general-purpose`。具名类型使用发现结果中的精确命名空间和声明名。对于内置的 pstack 声明，四个基础类型为 `pstack:poteto-agent`、`pstack:comment-sicko`、`pstack:thermo-nuclear-review-subagent` 和 `pstack:thermo-nuclear-code-quality-review-subagent`。
+所有 pstack `Agent` 调用都使用 `claude_agent`，包括通用面板成员，不要与标准 `subagent` 工具混用。pstack 流程中的代码编写委派使用 `pstack:poteto-agent`。通用面板保留对应 skill 指定的类型；通用任务可省略 `subagent_type`，或使用 `general-purpose`。具名类型使用发现结果中的精确命名空间和声明名。对于内置的 pstack 声明，四个基础类型为 `pstack:poteto-agent`、`pstack:comment-sicko`、`pstack:thermo-nuclear-review-subagent` 和 `pstack:thermo-nuclear-code-quality-review-subagent`。
 
 十个 effort 类型为 `pstack:effort-low`、`pstack:effort-medium`、`pstack:effort-high`、`pstack:effort-xhigh`、`pstack:effort-max`，以及 `pstack:poteto-agent-low`、`pstack:poteto-agent-medium`、`pstack:poteto-agent-high`、`pstack:poteto-agent-xhigh`、`pstack:poteto-agent-max`。加上四个基础类型，共有 14 个发现的具名类型，另有原生 `general-purpose`。发现结果取决于所选资源文件；当前会话可用的类型以工具描述为准。声明的档位适用于选定模型，包括继承的模型；不支持的档位或与显式档位冲突都会导致失败。
 
@@ -157,7 +163,7 @@ models:
 <a id="understand-the-implementation"></a>
 ## 理解实现
 
-`install(host, config)` 承载全部决策，`apply` 把 Cordis 上下文适配到很小的 `CompatHost` 接缝：注册工具、启动 activation、读取 LLM 目录、挂载 hook 桥。发现在加载时对每个根目录读取一次；子 agent 在 prompt 开头收到 agent 声明，因为 `SubagentStartRequest` 没有内联 system prompt 的位置。
+`await install(host, config)` 在注册工具前初始化偏好并承载派发决策，`apply` 把 Cordis 上下文适配到很小的 `CompatHost` 接缝：注册工具、启动 activation、读取 LLM 目录、挂载 hook 桥。发现在加载时对每个根目录读取一次；子 agent 在 prompt 开头收到 agent 声明，因为 `SubagentStartRequest` 没有内联 system prompt 的位置。
 
 ### 源码映射
 

@@ -12,6 +12,7 @@
     { "path": "../../core/tools" },
     { "path": "../../experimental/worktree" },
     { "path": "../../util/home-paths" },
+    { "path": "../../util/atomic-write" },
     { "path": "../../skill/skill" },
     { "path": "../../skill/skill-filesystem" },
     { "path": "../../interaction/user-questions" },

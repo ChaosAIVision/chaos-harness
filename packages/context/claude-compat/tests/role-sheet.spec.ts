@@ -49,8 +49,11 @@ describe('role choices', () => {
       choices: { roles: { 'bug-fix': 'opus', 'arena runners': 'a, b @high' }, defaultEffort: 'high' },
     })
   })
-  it('loads preferences with shipped defaults for unsaved roles', () => {
-    savePstackPreferences({ modelAliases: { deep: { provider: 'beta', model: 'big' } }, roles: { 'bug-fix': 'deep' }, sessionHook: false })
+  it('accepts digit-bearing role names and skips reserved or leading-digit legacy names', () => {
+    expect(parseRoleSheetFile('review2: auto\n2review: auto\nconstructor: auto\nsession hook: off').choices.roles).toEqual({ review2: 'auto' })
+  })
+  it('loads preferences with shipped defaults for unsaved roles', async () => {
+    await savePstackPreferences({ modelAliases: { deep: { provider: 'beta', model: 'big' } }, roles: { 'bug-fix': 'deep' }, sessionHook: false })
     const loaded = loadRoleSheet(undefined)
     expect(loaded.hookOff).toBe(true)
     expect(loaded.source).toBe('$DSH_HOME/pstack/config.json')

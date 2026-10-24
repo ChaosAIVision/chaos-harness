@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { RouteConfig } from './index.ts'
-import { defaultPstackRoles, loadPstackPreferences } from './pstack-config.ts'
+import { defaultPstackRoles, isPstackRole, loadPstackPreferences } from './pstack-config.ts'
 
 /** A rendered sheet and the digest a model can compare against `claude_agent_models`. */
 export interface RoleSheet {
@@ -52,8 +52,8 @@ export function parseRoleSheetFile(sheet: string): { choices: RoleChoices; hookO
   const roles: Record<string, string> = {}
   let defaultEffort: string | undefined
   for (const line of lines) {
-    if (!/^[a-z][a-z ,_-]*: .+$/.test(line) || line.startsWith('session hook:')) continue
     const at = line.indexOf(': ')
+    if (at < 0 || !isPstackRole(line.slice(0, at)) || line.slice(at + 2).length === 0) continue
     const key = line.slice(0, at)
     const value = line.slice(at + 2)
     if (key === 'default effort') defaultEffort = value
