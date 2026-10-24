@@ -156,6 +156,23 @@ describe('terminal conversation views', () => {
       expect(view.editor.getExpandedText()).toBe('editor')
     } finally { view.stop() }
   })
+
+  it('redraws the conversation after Ctrl+] releases the shell keyboard', async () => {
+    const { view, terminal } = renderer()
+    try {
+      const shell = view.scoped(new AbortController().signal).terminal('PTY', async (lease) => {
+        await new Promise<void>(resolve => lease.signal.addEventListener('abort', () => { resolve() }, { once: true }))
+      })
+      await tick()
+      terminal.output = ''
+      terminal.input('\u001d')
+      await shell
+      await tick()
+      expect(terminal.output).toContain('Enter send')
+      terminal.input('editor')
+      expect(view.editor.getExpandedText()).toBe('editor')
+    } finally { view.stop() }
+  })
 })
 
 class AnswerView implements TerminalPresentation {

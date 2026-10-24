@@ -233,7 +233,10 @@ export class TerminalRenderer implements Component {
       this.terminal.stop()
       this.focus = { kind: 'editor' }
       this.tui.setFocus(this.editor)
-      if (!this.closed) this.start()
+      if (!this.closed) {
+        this.start()
+        this.tui.requestRender(true)
+      }
     }
   }
 

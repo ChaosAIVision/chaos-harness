@@ -1,5 +1,6 @@
 /** English terminal feature dictionary. Presentation copy stays separate from domain values. */
 export const featureText = {
+  imageTooLarge: 'Image exceeds the Host upload limit',
   model: 'Model and reasoning', settings: 'Settings', providers: 'Model providers', account: 'Account',
   jobs: 'Background jobs', schedules: 'Scheduled tasks', workspaces: 'Workspaces', sessions: 'Sessions',
   subagents: 'Subagents', queue: 'Pending messages', files: 'Workspace files', documents: 'Document',

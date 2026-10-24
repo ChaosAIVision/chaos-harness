@@ -15,6 +15,9 @@ import { featureText as t } from '../src/features/locales.ts'
 
 const ready = <T>(value: T): RemoteResult<T> => ({ ok: true, value })
 const id = SessionId('terminal-feature-session')
+const imageRemote = { session: { projections: async () => ready({ values: {
+  imageLimits: { maxImageBytes: 1024, maxMessageImageBytes: 2048 },
+} }) } }
 const unused = (): never => { throw new Error('Unexpected session operation') }
 const session: SessionFace = {
   sessionId: id,
@@ -162,7 +165,7 @@ describe('Terminal feature operations', () => {
     const path = join(await directory(), 'photo.PNG')
     const bytes = Buffer.from([137, 80, 78, 71])
     await writeFile(path, bytes)
-    const h = harness({}, [], [path, 'Inspect the image'])
+    const h = harness(imageRemote, [], [path, 'Inspect the image'])
     const revoke = vi.spyOn(URL, 'revokeObjectURL')
     const beginSubmission = vi.fn<SessionFace['beginSubmission']>(() => ({
       requestId: brandString<ReturnType<SessionFace['beginSubmission']>['requestId']>('image-request'), abandon: vi.fn(),
@@ -188,7 +191,7 @@ describe('Terminal feature operations', () => {
   it('abandons and retires the image preview when prompt admission fails', async () => {
     const path = join(await directory(), 'photo.webp')
     await writeFile(path, new Uint8Array([1, 2]))
-    const h = harness({}, [], [path, ''])
+    const h = harness(imageRemote, [], [path, ''])
     const revoke = vi.spyOn(URL, 'revokeObjectURL')
     const abandon = vi.fn()
     const beginSubmission = vi.fn<SessionFace['beginSubmission']>((input) => {
@@ -220,6 +223,20 @@ describe('Terminal feature operations', () => {
     expect(prompt).toHaveBeenCalledWith([
       { type: 'text', text: 'Read the file' }, { type: 'file', receiptId: 'file-receipt' },
     ], 'queue', h.host.signal, 'file-request')
+  })
+
+  it('rejects images over the Host limit before allocating a preview or submitting', async () => {
+    const path = join(await directory(), 'large.png')
+    await writeFile(path, new Uint8Array(1025))
+    const h = harness(imageRemote, [], [path, 'Inspect'])
+    const preview = vi.spyOn(URL, 'createObjectURL')
+    const beginSubmission = vi.fn<SessionFace['beginSubmission']>(unused)
+    const prompt = vi.fn<SessionFace['prompt']>(unused)
+    h.host.current = () => ({ ...session, beginSubmission, prompt })
+    await expect(upload(h.host)).rejects.toThrow(t.imageTooLarge)
+    expect(preview).not.toHaveBeenCalled()
+    expect(beginSubmission).not.toHaveBeenCalled()
+    expect(prompt).not.toHaveBeenCalled()
   })
 
   it.each([['Second', { beforeWorkspaceId: 'second' }], [t.moveToEnd, {}], [undefined, undefined]])('reorders a workspace or cancels the %s anchor', async (anchor, expected) => {

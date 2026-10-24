@@ -175,10 +175,26 @@ export async function upload(host: TerminalFeatureHost): Promise<void> {
   if (path === undefined) return
   const text = await host.view.input(t.uploadPrompt)
   if (text === undefined) return
-  const bytes = await readFile(path)
   const name = basename(path)
   const mediaType = imageTypes.get(extname(path).toLowerCase())
   if (mediaType !== undefined) {
+    const projection = accepted(await host.client.remote.session.projections({ sessionId: session.sessionId }, host.signal))
+    const limits = projection?.values.imageLimits
+    if (limits === undefined) throw new Error(t.unavailable)
+    const maxBytes = Math.min(limits.maxImageBytes, limits.maxMessageImageBytes)
+    const file = await open(path, 'r')
+    let bytes: Buffer
+    try {
+      if ((await file.stat()).size > maxBytes) throw new Error(`${t.imageTooLarge} (${maxBytes} bytes)`)
+      const chunks: Buffer[] = []
+      let length = 0
+      for await (const chunk of file.createReadStream({ end: maxBytes, autoClose: false, signal: host.signal })) {
+        length += chunk.length
+        if (length > maxBytes) throw new Error(`${t.imageTooLarge} (${maxBytes} bytes)`)
+        chunks.push(chunk)
+      }
+      bytes = Buffer.concat(chunks, length)
+    } finally { await file.close() }
     const previewUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: mediaType }))
     const submission = session.beginSubmission({
       text, mode: 'queue', attachments: [{ type: 'image', value: { previewUrl, name } }],
@@ -189,6 +205,7 @@ export async function upload(host: TerminalFeatureHost): Promise<void> {
     } catch (error) { submission.abandon(); throw error }
     return
   }
+  const bytes = await readFile(path)
   const result = accepted(await host.client.fileUpload.upload(session.sessionId, bytes, name, host.signal))
   const submission = session.beginSubmission({ text, mode: 'queue', attachments: [{ type: 'file', value: result.file }] })
   try {
