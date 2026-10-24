@@ -4,7 +4,7 @@ Run `/Users/chaos/project/research/deepseek_cli/run-tui.sh` in Terminal.app. Add
 
 Source is `/Users/chaos/.local/share/chaos-harness-wt/terminal-ui`, branch `feature/terminal-ui`, source revision `cdfad909`. No push, merge, or installed runtime replacement was performed.
 
-Injected runtime context appears as folded context, with full detail available through `/trajectory`.
+Internal runtime context is hidden from the default chat. Full recorded detail remains available through `/trajectory`.
 
 The TUI uses Pi primitives and the existing Web Host and typed Client services. It includes streaming chat, load/resume/fork, dynamic Host commands and skills, scoped approvals and questions, pstack, settings/providers, jobs/schedules, workspaces, persistent shells, file/document navigation, image attachment, changes and exports. Colliding commands retain explicit `/host:NAME` and `/skill:NAME` access.
 
@@ -27,3 +27,9 @@ Documents use terminal text/table/navigation views. Third-party browser-only plu
 The PTY driver and local mock are retained under the worktree `.audit/tui/` for reproduction. The committed `snapshots/tui/` adapter adds keyless recorded-session replay to the repository snapshot lane. It borrows the existing Web recording, verifies actual terminal assistant text/readiness and clean exit, and protects the recorded history from rewrites. The snapshot and corpus tests passed four cases in two files. `/tmp/dsh-tui-recorded-snapshot-lib-final.log`.
 
 The built TUI replay runs with `DSH_EXAMPLE_MODE=lib`; the source-only snapshot lane skips this adapter. Its queue check permits only the observed startup-hook text insertion and its exact cancellation, with no pending work or human prompt.
+
+## Model-menu visual correction
+
+The user screenshot exposed conversation text around the centered overlay. The renderer now gives panels the full viewport and pads every row. Internal context rows are excluded from default chat rendering. Runtime source revision is `0e2f3df9`; recorded-screen test revision is `5fb5e4ac`.
+
+The original actual-CLI screen assertion failed with `Model menu mixed with conversation` in `/tmp/dsh-tui-overlay-screen-before.log`. The same check now reports `PASS model menu has a clean screen` in `/tmp/dsh-tui-overlay-screen-after.log`. Real xterm screen tests cover resize, Escape restoration and retained drafts. Build passed10/10 in `/tmp/dsh-tui-overlay-build.log`, TUI tests passed65/65 in `/tmp/dsh-tui-overlay-tests.log`, and actual recorded PTY screen/corpus checks passed4/4 in `/tmp/dsh-tui-overlay-snapshot-green.log`.
