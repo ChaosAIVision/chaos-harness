@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { classify, decide, decideOrphan, formatKept, isLeaseBranch, parseLeaseFile, parseWorktreeList, reapAction } from '../src/lease.ts'
+import { classify, decide, decideOrphan, formatKept, isLeaseBranch, parseLeaseFile, parseStatus, parseWorktreeList, reapAction, stashedFrom } from '../src/lease.ts'
 import type { Inspection, LeaseFile } from '../src/lease.ts'
 
 const file: LeaseFile = {
@@ -41,11 +41,13 @@ describe('reapAction', () => {
 
 describe('decide', () => {
   const base = 'b'.repeat(40)
-  const clean: Inspection = { dirty: false, head: base, symbolicRef: 'refs/heads/dsh/lease/a', branchTip: base }
+  const clean: Inspection = { dirty: false, ignored: false, stashed: false, head: base, symbolicRef: 'refs/heads/dsh/lease/a', branchTip: base }
   const lease = { branch: 'dsh/lease/a', baseCommit: base }
   it.each([
     ['clean at base', clean, 'remove'],
     ['dirty', { ...clean, dirty: true }, 'keep'],
+    ['ignored files', { ...clean, ignored: true }, 'keep'],
+    ['stash entry', { ...clean, stashed: true }, 'keep'],
     ['new commit', { ...clean, head: 'c'.repeat(40), branchTip: 'c'.repeat(40) }, 'keep'],
     ['detached HEAD', { ...clean, symbolicRef: undefined }, 'keep'],
     ['switched branch', { ...clean, symbolicRef: 'refs/heads/other' }, 'keep'],
@@ -115,4 +117,27 @@ it('formats a kept report with abbreviated commits', () => {
     path: '/r/.agents/worktrees/dsh/lease/a', branch: 'dsh/lease/a', baseCommit: '1234567890', headCommit: 'abcdefabcdef',
     uncommitted: true, reason: 'changed',
   })).toBe('Worktree kept (changed): path=/r/.agents/worktrees/dsh/lease/a branch=dsh/lease/a base=1234567 head=abcdefa uncommitted=true')
+})
+
+describe('parseStatus', () => {
+  it.each([
+    ['empty', '', { dirty: false, ignored: false }],
+    ['untracked', '?? a.txt\0', { dirty: true, ignored: false }],
+    ['ignored secret', '!! .env\0', { dirty: false, ignored: true }],
+    ['root node_modules', '!! node_modules/\0', { dirty: false, ignored: false }],
+    ['nested node_modules', '!! sub/node_modules/\0', { dirty: false, ignored: false }],
+    ['look-alike directory', '!! node_modules_old/\0', { dirty: false, ignored: true }],
+    ['both', '!! node_modules/\0!! .env\0 M tracked.txt\0', { dirty: true, ignored: true }],
+  ] as const)('%s', (_name, output, expected) => {
+    expect(parseStatus(output)).toEqual(expected)
+  })
+})
+
+describe('stashedFrom', () => {
+  it('matches only entries made on the lease branch', () => {
+    const subjects = 'WIP on main: abc subject\nOn dsh/lease/a: named\nWIP on dsh/lease/ab: x'
+    expect(stashedFrom(subjects, 'dsh/lease/a')).toBe(true)
+    expect(stashedFrom('WIP on dsh/lease/ab: x', 'dsh/lease/a')).toBe(false)
+    expect(stashedFrom('', 'dsh/lease/a')).toBe(false)
+  })
 })

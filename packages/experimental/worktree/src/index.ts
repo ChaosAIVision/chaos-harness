@@ -11,7 +11,7 @@ import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { PREPARE_DIRECTORY, WRITE_FILE } from './directory.ts'
-import { classify, decide, decideOrphan, isLeaseBranch, LEASE_PREFIX, parseLeaseFile, parseWorktreeList, reapAction } from './lease.ts'
+import { classify, decide, decideOrphan, isLeaseBranch, LEASE_PREFIX, parseLeaseFile, parseStatus, parseWorktreeList, reapAction, stashedFrom } from './lease.ts'
 import type { Inspection, LeaseFile } from './lease.ts'
 import { currentOwner, HOST, ownerAlive } from './owner.ts'
 import { runCommand } from './process.ts'
@@ -459,12 +459,14 @@ export class WorktreeService extends Service {
   }
 
   private async inspect(git: GitContext, path: string, branch: string, env: NodeJS.ProcessEnv): Promise<Inspection> {
-    const status = await git.git(path, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], undefined, env)
+    const status = await git.git(path, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching'], undefined, env)
+    const stash = await git.git(path, ['reflog', 'show', '--format=%gs', 'refs/stash'], [0, 128])
     const head = await git.git(path, ['rev-parse', '--verify', '-q', 'HEAD'], [0, 1])
     const symbolic = await git.git(path, ['symbolic-ref', '-q', 'HEAD'], [0, 1])
     const tip = await git.git(path, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`], [0, 1])
     return {
-      dirty: status.stdout.length > 0,
+      ...parseStatus(status.stdout),
+      stashed: stashedFrom(stash.stdout, branch),
       head: head.stdout.trim(),
       symbolicRef: symbolic.exitCode === 0 ? symbolic.stdout.trim() : undefined,
       branchTip: tip.exitCode === 0 ? tip.stdout.trim() : undefined,
@@ -498,7 +500,7 @@ export class WorktreeService extends Service {
     await this.persist(git, lease, 'kept')
     return {
       kind: 'kept', path: lease.path, branch: lease.branch, baseCommit: lease.file.baseCommit,
-      headCommit: inspection.head, uncommitted: inspection.dirty, reason,
+      headCommit: inspection.head, uncommitted: inspection.dirty || inspection.ignored, reason,
     }
   }
 

@@ -33,7 +33,7 @@ export interface KeptReport {
   baseCommit: string
   /** Commit the checkout's HEAD pointed at when it was settled. */
   headCommit: string
-  /** Whether tracked changes or non-ignored untracked files were present. */
+  /** Whether tracked changes, untracked files, or ignored files other than `node_modules` were present. */
   uncommitted: boolean
   /** The observation that prevented removal. */
   reason: KeptReason

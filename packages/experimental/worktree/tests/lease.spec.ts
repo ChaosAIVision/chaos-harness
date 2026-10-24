@@ -125,19 +125,72 @@ describe('isolating a delegate in a private worktree', () => {
     expect(settlement).toMatchObject({ kind: 'kept', uncommitted: false, reason: 'changed' })
   })
 
-  it('treats ignored build output as nothing to keep', async () => {
+  describe('ignored files', () => {
+    async function ignoring(patterns: string): Promise<string> {
+      const root = await repo()
+      await writeFile(join(root, '.gitignore'), patterns)
+      await git(root, 'add', '.gitignore')
+      await git(root, 'commit', '-m', 'ignore')
+      return root
+    }
+
+    it('keeps a checkout holding an ignored secrets file', async () => {
+      const root = await ignoring('.env\n')
+      const { ctx, agent } = await start(root)
+      const { isolated, settlement } = await delegate(ctx, agent, cwd => writeFile(join(cwd, '.env'), 'TOKEN=1\n'))
+      if (isolated.isolation.kind !== 'worktree') throw new Error('expected a worktree')
+      expect(settlement).toMatchObject({ kind: 'kept', reason: 'changed', uncommitted: true })
+      expect(await contents(join(isolated.isolation.path, '.env'))).toBe('TOKEN=1\n')
+      expect(await branches(root)).toContain(isolated.isolation.branch)
+    })
+
+    it('keeps a checkout holding an ignored output directory', async () => {
+      const root = await ignoring('out/\n')
+      const { ctx, agent } = await start(root)
+      const { isolated, settlement } = await delegate(ctx, agent, async (cwd) => {
+        await mkdir(join(cwd, 'out'))
+        await writeFile(join(cwd, 'out/artifact.bin'), 'built')
+      })
+      if (isolated.isolation.kind !== 'worktree') throw new Error('expected a worktree')
+      expect(settlement).toMatchObject({ kind: 'kept', reason: 'changed' })
+      expect(await contents(join(isolated.isolation.path, 'out/artifact.bin'))).toBe('built')
+    })
+
+    it('removes a checkout whose only ignored content is node_modules', async () => {
+      const root = await ignoring('node_modules/\n')
+      const { ctx, agent } = await start(root)
+      const { isolated, settlement } = await delegate(ctx, agent, async (cwd) => {
+        await mkdir(join(cwd, 'node_modules/pkg'), { recursive: true })
+        await writeFile(join(cwd, 'node_modules/pkg/index.js'), 'x')
+      })
+      expect(settlement).toMatchObject({ kind: 'removed' })
+      if (isolated.isolation.kind !== 'worktree') throw new Error('expected a worktree')
+      await expect(readdir(isolated.isolation.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it('keeps a checkout when node_modules sits next to another ignored file', async () => {
+      const root = await ignoring('node_modules/\n.env\n')
+      const { ctx, agent } = await start(root)
+      const { settlement } = await delegate(ctx, agent, async (cwd) => {
+        await mkdir(join(cwd, 'node_modules'))
+        await writeFile(join(cwd, 'node_modules/a.js'), 'x')
+        await writeFile(join(cwd, '.env'), 'x')
+      })
+      expect(settlement).toMatchObject({ kind: 'kept' })
+    })
+  })
+
+  it('keeps a checkout whose work was stashed into the shared stash ref', async () => {
     const root = await repo()
-    await writeFile(join(root, '.gitignore'), 'out/\n')
-    await git(root, 'add', '.gitignore')
-    await git(root, 'commit', '-m', 'ignore out')
     const { ctx, agent } = await start(root)
     const { isolated, settlement } = await delegate(ctx, agent, async (cwd) => {
-      await mkdir(join(cwd, 'out'))
-      await writeFile(join(cwd, 'out/artifact.bin'), 'built')
+      await writeFile(join(cwd, 'tracked.txt'), 'stashed work\n')
+      await git(cwd, 'stash')
     })
-    expect(settlement).toMatchObject({ kind: 'removed' })
     if (isolated.isolation.kind !== 'worktree') throw new Error('expected a worktree')
-    await expect(readdir(isolated.isolation.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await git(root, 'stash', 'list')).toContain(isolated.isolation.branch)
+    expect(settlement).toMatchObject({ kind: 'kept', reason: 'changed' })
+    expect(await contents(join(isolated.isolation.path, 'tracked.txt'))).toBe('initial\n')
   })
 
   it('settles when the delegate fails, and an untouched failure leaves nothing behind', async () => {

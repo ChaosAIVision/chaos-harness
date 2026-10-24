@@ -85,6 +85,10 @@ export function reapAction(status: LeaseStatus, state: LeaseState | undefined): 
 export interface Inspection {
   /** Tracked modifications or non-ignored untracked files. */
   dirty: boolean
+  /** Ignored files other than dependency directories, which Git would delete with the worktree. */
+  ignored: boolean
+  /** A `git stash` made inside the checkout left an entry in the shared stash ref. */
+  stashed: boolean
   head: string
   /** Output of `symbolic-ref -q HEAD`; undefined when detached. */
   symbolicRef: string | undefined
@@ -95,13 +99,38 @@ export interface Inspection {
 export type SettleDecision = { action: 'remove' } | { action: 'keep'; reason: KeptReason }
 
 /**
+ * Classify `git status --porcelain=v1 -z --ignored=matching` output.
+ * @param output - NUL-delimited status entries.
+ * @returns whether tracked or untracked work exists, and whether any ignored path lies outside `node_modules`.
+ */
+export function parseStatus(output: string): { dirty: boolean; ignored: boolean } {
+  let dirty = false
+  let ignored = false
+  for (const entry of output.split('\0')) {
+    if (entry.length === 0) continue
+    if (!entry.startsWith('!! ')) dirty = true
+    else if (!entry.slice(3).split('/').includes('node_modules')) ignored = true
+  }
+  return { dirty, ignored }
+}
+
+/**
+ * Whether the shared stash reflog holds an entry made from a lease checkout.
+ * @param subjects - reflog subjects of `refs/stash`, one per line.
+ * @param branch - lease branch the checkout had checked out.
+ */
+export function stashedFrom(subjects: string, branch: string): boolean {
+  return subjects.split('\n').some(line => line.startsWith(`WIP on ${branch}:`) || line.startsWith(`On ${branch}:`))
+}
+
+/**
  * A lease is removable only when nothing the child could have produced remains.
  * @param inspection - facts read from the checkout.
  * @param lease - lease branch and base commit.
  * @returns remove when clean at the base on the lease branch, otherwise keep.
  */
 export function decide(inspection: Inspection, lease: { branch: string; baseCommit: string }): SettleDecision {
-  const unchanged = !inspection.dirty
+  const unchanged = !inspection.dirty && !inspection.ignored && !inspection.stashed
     && inspection.head === lease.baseCommit
     && inspection.symbolicRef === `refs/heads/${lease.branch}`
     && inspection.branchTip === lease.baseCommit
