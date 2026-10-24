@@ -62,12 +62,22 @@ export type Isolation =
     reason: string
   }
 
+/** Result of starting a delegate in a lease. */
+export interface Isolated<T extends IsolatedActivation> {
+  /** The value returned by the caller's start function. */
+  activation: T
+  isolation: Isolation
+  /** Resolves after settlement and kept-report delivery; never rejects. Undefined when settlement failed. */
+  settled: Promise<Settlement | undefined>
+}
+
 /** Lease liveness as seen from this host. */
 export type LeaseStatus = 'live' | 'dead' | 'foreign' | 'kept' | 'unowned' | 'missing'
 
 /** One lease worktree as listed to humans and the reaper. */
 export interface LeaseSummary {
-  path: string
+  /** Checkout directory; absent for a lease branch whose worktree is gone. */
+  path?: string
   branch: string
   status: LeaseStatus
   /** Owning Session id; absent when the metadata file is missing. */

@@ -155,7 +155,6 @@ export function decideOrphan(tip: string, created: string | undefined): 'delete'
 export interface WorktreeEntry {
   path: string
   branch: string | undefined
-  prunable: boolean
 }
 
 /**
@@ -170,12 +169,10 @@ export function parseWorktreeList(output: string): WorktreeEntry[] {
     if (field.length === 0) {
       current = undefined
     } else if (field.startsWith('worktree ')) {
-      current = { path: field.slice('worktree '.length), branch: undefined, prunable: false }
+      current = { path: field.slice('worktree '.length), branch: undefined }
       entries.push(current)
     } else if (current !== undefined && field.startsWith('branch refs/heads/')) {
       current.branch = field.slice('branch refs/heads/'.length)
-    } else if (current !== undefined && field.startsWith('prunable')) {
-      current.prunable = true
     }
   }
   return entries

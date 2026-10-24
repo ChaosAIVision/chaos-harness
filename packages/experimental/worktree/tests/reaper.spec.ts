@@ -235,8 +235,8 @@ describe('replaying interrupted transitions', () => {
     await git(root, 'worktree', 'remove', '--force', advanced)
     const { ctx, agent } = await start(root)
     expect(await ctx.worktrees.list(agent)).toEqual([
-      expect.objectContaining({ branch: 'dsh/lease/advanced', status: 'unowned', path: '' }),
-      expect.objectContaining({ branch: 'dsh/lease/untouched', status: 'unowned', path: '' }),
+      expect.objectContaining({ branch: 'dsh/lease/advanced', status: 'unowned' }),
+      expect.objectContaining({ branch: 'dsh/lease/untouched', status: 'unowned' }),
     ])
     expect(await ctx.worktrees.reap(agent)).toEqual([{ kind: 'removed', branch: 'dsh/lease/untouched' }])
     expect(await git(root, 'branch', '--list', 'dsh/lease/*')).toContain('dsh/lease/advanced')

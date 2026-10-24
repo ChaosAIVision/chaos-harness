@@ -101,16 +101,16 @@ describe('parseLeaseFile', () => {
 })
 
 describe('parseWorktreeList', () => {
-  it('reads paths, branches, and prunable markers from NUL-delimited records', () => {
+  it('reads paths and branches from NUL-delimited records', () => {
     const output = [
       'worktree /repo', 'HEAD aaa', 'branch refs/heads/main', '',
-      'worktree /repo/.agents/worktrees/dsh/lease/x y', 'HEAD bbb', 'branch refs/heads/dsh/lease/x', 'prunable gitdir file points to non-existent location', '',
+      'worktree /repo/.agents/worktrees/dsh/lease/x y', 'HEAD bbb', 'branch refs/heads/dsh/lease/x', '',
       'worktree /detached', 'HEAD ccc', 'detached', '', '',
     ].join('\0')
     expect(parseWorktreeList(output)).toEqual([
-      { path: '/repo', branch: 'main', prunable: false },
-      { path: '/repo/.agents/worktrees/dsh/lease/x y', branch: 'dsh/lease/x', prunable: true },
-      { path: '/detached', branch: undefined, prunable: false },
+      { path: '/repo', branch: 'main' },
+      { path: '/repo/.agents/worktrees/dsh/lease/x y', branch: 'dsh/lease/x' },
+      { path: '/detached', branch: undefined },
     ])
     expect(parseWorktreeList('')).toEqual([])
   })
