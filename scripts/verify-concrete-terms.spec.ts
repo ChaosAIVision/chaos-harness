@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -43,6 +43,21 @@ describe('concrete terminology policy', () => {
     } finally {
       rmSync(repoRoot, { recursive: true, force: true })
     }
+  })
+
+  it.each([
+    'packages/context/claude-compat/resources/pstack/NOTICE-skills.md',
+    'packages/context/claude-compat/resources/pstack/skills/poteto-mode/references/licenses/NOTICE.md',
+    'packages/context/claude-compat/resources/pstack/skills/babysit/SKILL.md',
+  ])('preserves exact bundled attribution in %s while rejecting other occurrences', (file) => {
+    const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
+    expect(findConcreteTermViolations(file, source)).toEqual([])
+    const attribution = source.split('\n').find(line => line.toLowerCase().includes(blockedTerm))
+    expect(attribution).toBeDefined()
+    if (attribution === undefined) throw new Error(`missing attribution fixture in ${file}`)
+    expect(findConcreteTermViolations(file, `${attribution} ${blockedTerm}`)).toEqual([{ file, line: 1 }])
+    expect(findConcreteTermViolations(file, blockedTerm)).toEqual([{ file, line: 1 }])
+    expect(findConcreteTermViolations('docs/attribution.md', attribution)).toEqual([{ file: 'docs/attribution.md', line: 1 }])
   })
 
   it('accepts exact replacement terms', () => {
