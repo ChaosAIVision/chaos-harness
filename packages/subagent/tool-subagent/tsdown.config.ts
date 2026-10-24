@@ -1,4 +1,5 @@
 import { defineConfig } from 'tsdown'
+import metadata from './package.json' with { type: 'json' }
 
 const entry = (path: string) => ({
   entry: [path],
@@ -9,9 +10,10 @@ const entry = (path: string) => ({
   fixedExtension: false,
   dts: false,
   clean: false,
+  deps: { neverBundle: (specifier: string) => specifier === metadata.name },
 })
 
-/** Build self-contained Loader entries so the package needs no private chunks. */
+/** Loader entries share human approval validation through the package root without private chunks. */
 export default defineConfig([
   entry('lib/types/index.js'),
   entry('lib/types/model-selection-settings.js'),
