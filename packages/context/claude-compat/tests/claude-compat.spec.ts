@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { mintHumanApproval } from '@deepseek-ai/dsh-tool-subagent'
 import { Config as ConfigSchema, install, loadPstackPreferences, pstackConfigPath } from '@deepseek-ai/dsh-claude-compat'
 import type { CompatHost, Config } from '@deepseek-ai/dsh-claude-compat'
 
@@ -17,6 +18,7 @@ interface Harness {
   readonly contexts: Array<(isChild?: boolean) => string | undefined>
   readonly tool: Parameters<CompatHost['registerTool']>[0]
   readonly tools: Map<string, Parameters<CompatHost['registerTool']>[0]>
+  readonly injected: string[]
 }
 
 const AGENT_MARKDOWN = '---\nname: comment-sicko\ndescription: A deranged comment-hater.\n---\n\n# Comment Sicko\n\nMy first output when spawned is exactly this.\n'
@@ -38,12 +40,13 @@ function llmStub(): NonNullable<CompatHost['llm']> {
   }
 }
 
-function harness(overrides: Partial<Config> = {}, policy?: CompatHost['modelSelectionPolicy'], approveRoutes?: CompatHost['approveRoutes']): Harness {
+function harness(overrides: Partial<Config> = {}, policy?: CompatHost['modelSelectionPolicy'], widenSession?: CompatHost['widenSession']): Harness {
   const activations: Activation[] = []
   const hooks: Harness['hooks'] = []
   const contexts: Harness['contexts'] = []
   let tool: Harness['tool'] | undefined
   const tools: Harness['tools'] = new Map()
+  const injected: string[] = []
   const host: CompatHost = {
     registerTool(candidate) {
       tools.set(candidate.name, candidate)
@@ -55,7 +58,8 @@ function harness(overrides: Partial<Config> = {}, policy?: CompatHost['modelSele
       return { childId: 'child-1' }
     },
     llm: llmStub(),
-    ...approveRoutes === undefined ? {} : { approveRoutes },
+    ...widenSession === undefined ? {} : { widenSession },
+    injectContext: (_agent, text) => { injected.push(text) },
     ...policy === undefined ? {} : { modelSelectionPolicy: policy },
     onAgentCreated(context) { contexts.push((isChild = false) => context(isChild)) },
     mountHooks(config) {
@@ -72,7 +76,7 @@ function harness(overrides: Partial<Config> = {}, policy?: CompatHost['modelSele
     ...overrides,
   })
   if (tool === undefined) throw new Error('claude_agent was not registered')
-  return { host, activations, hooks, tool, contexts, tools }
+  return { host, activations, hooks, tool, contexts, tools, injected }
 }
 
 const exec = { agent: { id: 'parent', options: { provider: 'alpha', model: 'judge' }, session: { requestHeader: () => undefined } }, signal: new AbortController().signal }
@@ -110,6 +114,14 @@ describe('claude-compat discovery', () => {
       ],
       inherited: { provider: 'alpha', model: 'judge', allowed: true, efforts: ['high'] },
     }))
+  })
+
+  it('reports the recorded Session policy revision and the sheet digest the initialization text carries', async () => {
+    const { tools, contexts } = harness({ modelAliases: { opus: { provider: 'alpha', model: 'judge' } } },
+      () => ({ routes: [{ provider: 'alpha', model: 'judge' }], revision: 3 }))
+    const found = await tools.get('claude_agent_models')!.execute({}, exec as never) as { policyRevision: number; sheetDigest: string }
+    expect(found.policyRevision).toBe(3)
+    expect(contexts[0]!()).toContain(`pstack role sheet ${found.sheetDigest}.`)
   })
 
   it('refreshes discovery, dispatch, and initialization after preferences change on the same installed instance', async () => {
@@ -342,7 +354,7 @@ describe('claude-compat routes', () => {
     })
     await tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model: 'opus' }, exec as never)
     expect(activations[0]?.spec.request.agentOptions).toEqual({ provider: 'alpha', model: 'judge', reasoningEffort: 'high' })
-    expect(tool.description).toContain('Call claude_agent_models for the current aliases; discovery is authoritative.')
+    expect(tool.description).toContain('claude_agent_models returns the current aliases, roles, default effort, policyRevision, and sheetDigest and is authoritative.')
   })
 
   it.each(['auto', 'inherit-parent'])('omits child options for %s', async (model) => {
@@ -404,31 +416,72 @@ describe('claude-compat routes', () => {
 })
 
 describe('pstack setup approval', () => {
-  async function setup(approval?: CompatHost['approveRoutes']) {
+  async function setup(widen?: CompatHost['widenSession']) {
     await mkdir(join(root, 'agents-home', 'pstack-plugin', 'hooks'), { recursive: true })
     await writeFile(join(root, 'agents-home', 'pstack-plugin', 'hooks', 'session-start-context.md'), 'mandate')
-    return harness({}, undefined, approval).tools.get('claude_agent_setup')!
+    return harness({}, undefined, widen)
   }
+  type Persist = Parameters<NonNullable<CompatHost['widenSession']>>[3]
+  const widening = (answer: 'yes' | 'no', revision = 2) => vi.fn(async (_exec: unknown, routes: Array<{ provider: string; model: string }>, unsaved: Array<{ provider: string; model: string }>, persist: Persist) => {
+    if (routes.length === 0 && unsaved.length === 0) { await persist(undefined); return { kind: 'unchanged' as const, revision: 1 } }
+    if (answer === 'no') return { kind: 'declined' as const }
+    await persist(mintHumanApproval(routes))
+    return { kind: 'widened' as const, revision }
+  })
   const preferences_json = JSON.stringify({ modelAliases: { chosen: { provider: 'alpha', model: 'judge' } }, roles: { 'feature, refactoring': 'chosen @high' } })
-  it('fails closed without a human confirmation provider', async () => {
-    const tool = await setup()
-    await expect(tool.execute({ preferences_json }, exec as never)).rejects.toThrow('not authorized')
+  it('fails closed without a widening seam when routes need confirmation', async () => {
+    const { tools, injected } = await setup()
+    await expect(tools.get('claude_agent_setup')!.execute({ preferences_json }, exec as never)).rejects.toThrow('not authorized')
     expect(loadPstackPreferences()?.allowedModels).toEqual([])
+    expect(injected).toEqual([])
   })
   it('saves nothing after direct human denial', async () => {
-    const approval = vi.fn(async () => false)
-    const tool = await setup(approval)
-    await expect(tool.execute({ preferences_json }, exec as never)).rejects.toThrow('not authorized')
-    expect(approval).toHaveBeenCalledOnce()
+    const widen = widening('no')
+    const { tools, injected } = await setup(widen)
+    await expect(tools.get('claude_agent_setup')!.execute({ preferences_json }, exec as never)).rejects.toThrow('not authorized')
+    expect(widen).toHaveBeenCalledOnce()
     expect(loadPstackPreferences()?.modelAliases).toEqual({})
+    expect(injected).toEqual([])
   })
-  it('persists exact routes only after direct human confirmation and preserves other roles', async () => {
-    const approval = vi.fn(async (_routes: Array<{ provider: string; model: string }>) => true)
-    const tool = await setup(approval)
-    await tool.execute({ preferences_json }, exec as never)
-    expect(approval.mock.calls[0]?.[0]).toEqual([{ provider: 'alpha', model: 'judge' }])
+  it('persists exact routes only after direct human confirmation, preserves other roles, and injects the new sheet', async () => {
+    const widen = widening('yes')
+    const { tools, injected } = await setup(widen)
+    const message = await tools.get('claude_agent_setup')!.execute({ preferences_json }, exec as never)
+    expect(widen.mock.calls[0]?.[1]).toEqual([{ provider: 'alpha', model: 'judge' }])
+    expect(widen.mock.calls[0]?.[2]).toEqual([{ provider: 'alpha', model: 'judge' }])
     expect(loadPstackPreferences()?.allowedModels).toEqual([{ provider: 'alpha', model: 'judge' }])
     expect(Object.keys(loadPstackPreferences()!.roles)).toHaveLength(17)
+    expect(injected).toHaveLength(1)
+    expect(injected[0]).toContain('chosen => alpha/judge')
+    expect(injected[0]).toContain('feature, refactoring: chosen @high')
+    const digest = /pstack role sheet ([0-9a-f]{8})\./.exec(injected[0]!)?.[1]
+    expect(message).toContain('Session policy revision 2 is active now.')
+    expect(message).toContain(`Role sheet ${digest} was injected`)
+  })
+  it('injects a refreshed sheet for a roles-only edit without asking about routes', async () => {
+    const widen = widening('yes')
+    const { tools, injected } = await setup(widen)
+    await tools.get('claude_agent_setup')!.execute({ preferences_json: JSON.stringify({ roles: { 'bug-fix': 'inherit-parent' }, defaultEffort: 'high' }) }, exec as never)
+    expect(widen.mock.calls[0]?.[1]).toEqual([])
+    expect(widen.mock.calls[0]?.[2]).toEqual([])
+    expect(injected[0]).toContain('default effort: high')
+  })
+  it('refuses allowedModels in the model-supplied JSON before any question is asked', async () => {
+    const widen = widening('yes')
+    const { tools } = await setup(widen)
+    await expect(tools.get('claude_agent_setup')!.execute({ preferences_json: JSON.stringify({ allowedModels: [{ provider: 'evil', model: 'x' }] }) }, exec as never)).rejects.toThrow('operator-owned')
+    expect(widen).not.toHaveBeenCalled()
+    expect(loadPstackPreferences()?.allowedModels).toEqual([])
+  })
+  it('reports the role sheet, default effort, and policy revision in discovery', async () => {
+    const widen = widening('yes')
+    const { tools, injected } = await setup(widen)
+    await tools.get('claude_agent_setup')!.execute({ preferences_json }, exec as never)
+    const found = await tools.get('claude_agent_models')!.execute({}, exec as never) as { roles: Record<string, string>; defaultEffort: string; sheetDigest: string; policyRevision?: number }
+    expect(found.roles['feature, refactoring']).toBe('chosen @high')
+    expect(found.defaultEffort).toBe('session')
+    expect(found.sheetDigest).toBe(/pstack role sheet ([0-9a-f]{8})\./.exec(injected[0]!)?.[1])
+    expect(found).not.toHaveProperty('policyRevision')
   })
 })
 

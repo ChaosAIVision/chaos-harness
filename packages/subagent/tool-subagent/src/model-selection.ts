@@ -23,6 +23,8 @@ export const AllowedModelRouteSchema: z<AllowedModelRoute> = z.object({
 export interface ModelSelectionPolicy {
   /** Exact provider/model routes authorized for explicit selection. */
   readonly routes: readonly AllowedModelRoute[]
+  /** Revision of the recorded Session policy these routes came from, for discovery output. */
+  readonly revision?: number
 }
 
 /**
