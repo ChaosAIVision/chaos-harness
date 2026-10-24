@@ -95,9 +95,15 @@ def replay(node, cli, fixture, expected, frames):
             for _ in range(3):
                 pump()
             (frame_dir / 'menu.ansi').write_bytes(raw)
+            mark = len(raw)
             os.write(master, b'\x1b')
-            for _ in range(5):
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
                 pump()
+                if 'Connected · ' + ready in ANSI.sub('', raw[mark:].decode('utf-8', 'replace')):
+                    break
+            else:
+                raise AssertionError('Escape did not restore the recorded conversation')
             (frame_dir / 'restored.ansi').write_bytes(raw)
             os.write(master, b'\x03')
             deadline = time.monotonic() + 15
