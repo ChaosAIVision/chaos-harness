@@ -24,7 +24,9 @@
     },
     "./client": {
       "types": "./lib/types/client/index.d.ts",
-      "default": "./lib/client.js"
+      "node": "./lib/client.node.js",
+      "browser": "./lib/client.browser.js",
+      "default": "./lib/client.browser.js"
     },
     "./typert": {
       "types": "./lib/typert.host.d.ts",
@@ -89,12 +91,13 @@
   "files": [
     "locale/*.json",
     "lib/index.js",
-    "lib/client.js",
     "lib/types/**/*.js",
     "lib/types/**/*.d.ts",
     "lib/typert.host.js",
     "lib/typert.host.d.ts",
     "lib/typert.remote-client.js",
-    "lib/typert.remote-client.d.ts"
+    "lib/typert.remote-client.d.ts",
+    "lib/client.node.js",
+    "lib/client.browser.js"
   ]
 }

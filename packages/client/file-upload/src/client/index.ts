@@ -1,6 +1,6 @@
 /** Browser background-upload Cordis service. */
 
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Fiber } from '@deepseek-ai/cordis'
 import { FileUploadRuntime } from './runtime.ts'
 import type { FileUploadService } from './contract.ts'
 import type { ClientFileUploadHooks } from '../types.ts'
@@ -33,6 +33,6 @@ export function apply(ctx: Context): void {
  * @param hooks - carrier private to this Client, overriding any page boot hook.
  * @returns the mounted service's disposable Cordis fiber.
  */
-export function installFileUpload(ctx: Context, hooks: ClientFileUploadHooks) {
+export function installFileUpload(ctx: Context, hooks: ClientFileUploadHooks): Fiber {
   return ctx.plugin(FileUploadRuntime, hooks)
 }

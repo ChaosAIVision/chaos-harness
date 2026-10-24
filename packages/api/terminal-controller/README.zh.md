@@ -9,6 +9,8 @@ kind: "package-reference"
 
 ## 概述
 
+非页面 Client 的 `./client` 导出选择 Node ESM bundle，页面则选择浏览器 loader bundle。两者共用终端视图、确认和重连实现。浏览器存储偏好仍为可选。
+
 从 Web 侧栏在 Session 当前工作目录打开执行环境的默认 shell。重新连接已有进程，并关闭 provider 管理的完整进程范围。终端输出不进入 Agent 对话记录。保留终端会占用进程和有界屏幕缓存。
 
 ## 目录
