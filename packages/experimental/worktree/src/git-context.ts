@@ -20,8 +20,10 @@ export interface Runtime {
   readonly config: ResolvedConfig
 }
 
+/** Captured subprocess streams and exit status from a bounded command. */
 export type CommandResult = Awaited<ReturnType<typeof runCommand>>
 
+/** Git and Node command runners sharing the caller's policy and cancellation. */
 export interface GitContext {
   readonly policy: SandboxExecutionPolicy
   readonly cwd: string
@@ -36,6 +38,7 @@ export interface GitContext {
  * @param policy - sandbox policy of the calling Session.
  * @param cwd - default directory for repository discovery.
  * @param signal - cancellation of every command.
+ * @returns command runners bound to the supplied policy, directory, and signal.
  */
 export function bindGit(runtime: Runtime, policy: SandboxExecutionPolicy, cwd: string, signal: AbortSignal): GitContext {
   const { ctx, config } = runtime
@@ -59,6 +62,8 @@ export interface Repository {
 
 /**
  * Locate the repository containing the context's directory.
+ * @param runtime - mounted filesystem provider and resolved configuration.
+ * @param git - directory and command runners used for repository discovery.
  * @returns the canonical root and HEAD commit, or why the directory cannot be isolated.
  */
 export async function repository(runtime: Runtime, git: GitContext): Promise<Repository | { reason: string }> {

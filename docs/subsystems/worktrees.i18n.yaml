@@ -3,7 +3,7 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/subsystems/worktrees.md
 /git-worktrees:
-  en: 21ec4a3b825d7e81
+  en: 8d07d43191b4e9d7
   zh: c841c5ca4b4e8959
 /git-worktrees/creation-and-retention:
   en: 53f643c5d30e00b2
@@ -11,3 +11,6 @@
 /git-worktrees/request-and-result:
   en: 8391b091607600eb
   zh: 6c735a337d60d566
+/git-worktrees/delegate-leases:
+  en: ed87ed660afb44a8
+  zh: e9d5a156b54ddce6

@@ -1,6 +1,7 @@
 /** Reject one ambiguous origin label from maintained tracked files. */
 
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { lstatSync, readFileSync, readlinkSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -9,6 +10,16 @@ import { historicalSchemaRegion } from './historical-schema-region.ts'
 const root = resolve(import.meta.dirname, '..')
 const blockedTerm = 'prove' + 'nance'
 const excludedPrefixes = ['vendor/', '.agents/notes/archived/'] as const
+
+// Preserve only the pinned attribution line in each bundled third-party file.
+const attributionLineHashes: Readonly<Record<string, string>> = {
+  'packages/context/claude-compat/resources/pstack/NOTICE-skills.md':
+    '15fe239236f2e5a50aa087237e4cfccde555e1ffb9382f03f1a02d12189e4f12',
+  'packages/context/claude-compat/resources/pstack/skills/poteto-mode/references/licenses/NOTICE.md':
+    '15fe239236f2e5a50aa087237e4cfccde555e1ffb9382f03f1a02d12189e4f12',
+  'packages/context/claude-compat/resources/pstack/skills/babysit/SKILL.md':
+    '6999c4e9862ece74512670a64349e3fa4a5c5ca977ef0dee7bb8a954db6f88e5',
+}
 
 /** One blocked term occurrence in a tracked path or text line. */
 export interface ConcreteTermViolation {
@@ -34,7 +45,8 @@ function containsBlockedTerm(value: string): boolean {
  * Find the blocked term in one maintained tracked file.
  * @param file - repository-relative tracked path.
  * @param source - text contents or symlink target.
- * @returns violations outside vendored sources, frozen Agent Notes, historical schemas and their checked generated regions.
+ * @returns violations outside vendored sources, frozen Agent Notes, historical schemas and their generated regions,
+ * and exact third-party attribution lines.
  */
 export function findConcreteTermViolations(file: string, source: string): ConcreteTermViolation[] {
   if (isExcluded(file)) return []
@@ -44,7 +56,9 @@ export function findConcreteTermViolations(file: string, source: string): Concre
   const schemaRegion = historicalSchemaRegion(file, source)
   for (const [index, line] of lines.entries()) {
     if (schemaRegion !== undefined && index >= schemaRegion[0] && index < schemaRegion[1]) continue
-    if (containsBlockedTerm(line)) violations.push({ file, line: index + 1 })
+    if (!containsBlockedTerm(line)) continue
+    if (attributionLineHashes[file] === createHash('sha256').update(line).digest('hex')) continue
+    violations.push({ file, line: index + 1 })
   }
   return violations
 }

@@ -35,6 +35,7 @@ export function mintHumanApproval(routes: readonly AllowedModelRoute[]): HumanAp
 /**
  * Check at runtime that a proof came from {@link mintHumanApproval}; the brand alone is erased at compile time.
  * @param value - candidate proof, possibly forged by structural typing or a cast.
+ * @returns nothing; narrows `value` to a proof minted by this module.
  * @throws when `value` was not minted by this module.
  */
 export function assertHumanApproval(value: unknown): asserts value is HumanApproval {

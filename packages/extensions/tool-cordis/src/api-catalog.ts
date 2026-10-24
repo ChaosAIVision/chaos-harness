@@ -3203,11 +3203,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Idempotent disposer that withdraws this registration.',
       },
       {
-        signature: 'async widenSession( agent: Agent, routes: readonly AllowedModelRoute[], steps: WidenSessionSteps, signal: AbortSignal, ): Promise<WidenSessionOutcome>',
+        signature: 'async widenSession<Saved>( agent: Agent, routes: readonly AllowedModelRoute[], steps: WidenSessionSteps<Saved>, signal: AbortSignal, ): Promise<WidenSessionOutcome<Saved>>',
         description: 'Widen one running Session\'s authorized routes after a person confirms them, as one operation. Order is fixed: ask, persist, append. A decline, an absent answer, a `persist` rejection, or an abort appends nothing. Widening is monotone: the Session keeps every route it had and gains `routes`. A Session without a policy keeps its parent route. Authorization is never derived from file contents, so editing preferences outside this method grants nothing to a running Session.',
         parameters: [{ name: 'agent', description: 'running Agent whose Session is widened.' }, { name: 'routes', description: 'exact routes the Session should be allowed to select.' }, { name: 'steps', description: 'host-owned ask and persist steps and the routes still to be saved.' }, { name: 'signal', description: 'cancellation for the whole operation.' }],
         returns: '`unchanged` when the Session already allows every route and `unsaved` is empty (persist still runs without a proof), `widened` with the new revision after an appended entry, or `declined` when no proof was given.',
-        throws: ['when the operator setting is `enabled: false`, when a Session without a policy has no parent route, when the proof does not cover the missing routes, or when `persist` or the signal rejects.'],
+        throws: ['when routes need confirmation while the operator setting is `enabled: false`, when a Session without a policy has no parent route, when the proof does not cover the missing routes, or when `persist` or the signal rejects.'],
       },
     ],
   },
@@ -4223,14 +4223,32 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'worktrees',
-    summary: 'Creates retained Git worktrees under the mounted filesystem and sandbox providers.',
-    description: 'Creates retained Git worktrees under the mounted filesystem and sandbox providers.',
+    summary: 'Creates retained Git worktrees and settled delegate leases under the mounted filesystem and sandbox providers.',
+    description: 'Creates retained Git worktrees and settled delegate leases under the mounted filesystem and sandbox providers.',
     methods: [
       {
         signature: 'async create(agent: Agent, request: CreateWorktreeRequest = {}, signal?: AbortSignal): Promise<CreatedWorktree>',
         description: 'Create a fresh branch and checkout at a pinned local revision, then enter it. Existing branches or checkout paths fail. Uncommitted files stay in the source checkout. Checkout disables configured clean, smudge, and process filters without changing Git config. Repository-local replacement refs still apply; baseCommit reports the resolved object name. The new checkout becomes current only after Git setup succeeds. Failures may retain newly allocated Git/filesystem artifacts; no branch or checkout is removed automatically.',
         parameters: [{ name: 'agent', description: 'caller whose current directory selects the source repository and file policy.' }, { name: 'request', description: 'optional new name and local revision; defaults are generated name and HEAD.' }, { name: 'signal', description: 'cancellation of lookup, creation, and working-directory publication.' }],
         returns: 'canonical checkout path, branch name, pinned commit, and source repository root.',
+      },
+      {
+        signature: 'async isolate<T extends IsolatedActivation>( agent: Agent, request: IsolateRequest, start: (cwd: string) => Promise<T>, onKept: (report: KeptReport) => void, signal?: AbortSignal, ): Promise<Isolated<T>>',
+        description: 'Run a delegate in a private worktree and settle it when the delegate stops. The caller\'s working directory never changes. A clean checkout is removed with its branch; one with edits, ignored files other than `node_modules`, commits, a stash entry, or a moved HEAD is kept and reported through `onKept`. Outside a Git work tree, or in a repository without commits, the delegate runs in the caller\'s directory and `isolation` says why. Leases whose owning process died are settled first. A lease owned by a live process, or by another host, is never touched.',
+        parameters: [{ name: 'agent', description: 'caller whose Session selects the file policy and owns the lease.' }, { name: 'request', description: 'optional source directory.' }, { name: 'start', description: 'starts the delegate in the directory it must use and returns its activation.' }, { name: 'onKept', description: 'receives each checkout this call or a previous crashed run of this Session left behind; failures are logged.' }, { name: 'signal', description: 'cancellation of provisioning only; settlement always runs to completion.' }],
+        returns: 'the activation, where it runs, and a promise for the settlement.',
+      },
+      {
+        signature: 'async reap(agent: Agent, signal?: AbortSignal): Promise<Settlement[]>',
+        description: 'Settle every lease in the caller\'s repository whose owning process has died. Clean checkouts are removed; checkouts with changes become kept and stay for a human. Safe to repeat and to run concurrently with other processes.',
+        parameters: [{ name: 'agent', description: 'caller whose current directory selects the repository and file policy.' }, { name: 'signal', description: 'cancellation of the sweep.' }],
+        returns: 'the leases settled by this call; empty outside a Git work tree.',
+      },
+      {
+        signature: 'async list(agent: Agent, signal?: AbortSignal): Promise<LeaseSummary[]>',
+        description: 'List delegate leases in the caller\'s repository without changing anything.',
+        parameters: [{ name: 'agent', description: 'caller whose current directory selects the repository and file policy.' }, { name: 'signal', description: 'cancellation of the listing.' }],
+        returns: 'one summary per lease worktree or orphaned lease branch; empty outside a Git work tree.',
       },
     ],
   },
@@ -5335,10 +5353,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface CommandInvocation {\n    readonly commandId: CommandId;\n    readonly agent: Agent;\n    readonly rawInput: string;\n    readonly attachments: readonly (ImageBlock | FileBlock)[];\n    readonly signal: AbortSignal;\n}',
   },
   {
-    name: 'CommandResult',
-    declaration: 'export type CommandResult = {\n    readonly kind: \'success\';\n    readonly text?: string;\n    readonly sourceEventSeq?: SessionSeq;\n} | {\n    readonly kind: \'error\';\n    readonly text: string;\n};',
-  },
-  {
     name: 'CommandRunInput',
     declaration: 'export interface CommandRunInput {\n    command: string;\n    args: string;\n    origin: PromptOrigin;\n}',
   },
@@ -6087,6 +6101,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface InvokeRemoteRequest {\n    readonly namespace: string;\n    readonly method: string;\n    readonly args: Readonly<Record<string, unknown>>;\n    readonly uplink?: AsyncIterable<unknown>;\n    readonly uplinkWindow?: RemoteUplinkWindow | undefined;\n    readonly peer: PeerScope;\n    readonly signal?: AbortSignal;\n}',
   },
   {
+    name: 'Isolated',
+    declaration: 'export interface Isolated<T extends IsolatedActivation> {\n    activation: T;\n    isolation: Isolation;\n    settled: Promise<Settlement | undefined>;\n}',
+  },
+  {
+    name: 'IsolatedActivation',
+    declaration: 'export interface IsolatedActivation {\n    readonly result: Promise<unknown>;\n}',
+  },
+  {
+    name: 'IsolateRequest',
+    declaration: 'export interface IsolateRequest {\n    cwd?: string;\n}',
+  },
+  {
+    name: 'Isolation',
+    declaration: 'export type Isolation = {\n    kind: \'worktree\';\n    path: string;\n    cwd: string;\n    branch: string;\n    baseCommit: string;\n    baseLabel: string;\n} | {\n    kind: \'degraded\';\n    cwd: string;\n    reason: string;\n};',
+  },
+  {
     name: 'JobAppendOptions',
     declaration: 'export interface JobAppendOptions {\n    channel?: JobChannel;\n    gapBefore?: true;\n}',
   },
@@ -6215,6 +6245,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type JsonValue = null | boolean | number | string | JsonValue[] | {\n    [key: string]: JsonValue;\n};',
   },
   {
+    name: 'KeptReason',
+    declaration: 'export type KeptReason = \'changed\' | \'changed-during-removal\' | \'removal-refused\';',
+  },
+  {
+    name: 'KeptReport',
+    declaration: 'export interface KeptReport {\n    path: string;\n    branch: string;\n    baseCommit: string;\n    headCommit: string;\n    uncommitted: boolean;\n    reason: KeptReason;\n}',
+  },
+  {
     name: 'KvFacet',
     declaration: 'export interface KvFacet {\n    open(descriptor: KvUnitDescriptor): Promise<KvUnit>;\n}',
   },
@@ -6229,6 +6267,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'KvUnitDescriptor',
     declaration: 'export interface KvUnitDescriptor {\n    readonly name: string;\n    readonly version: number;\n    readonly tables: readonly string[];\n    readonly hasGlobal: boolean;\n    readonly layout?: \'single\' | \'per-record\';\n    readonly compatibleVersions?: readonly number[];\n}',
+  },
+  {
+    name: 'LeaseStatus',
+    declaration: 'export type LeaseStatus = \'live\' | \'dead\' | \'foreign\' | \'kept\' | \'unowned\' | \'missing\';',
+  },
+  {
+    name: 'LeaseSummary',
+    declaration: 'export interface LeaseSummary {\n    path?: string;\n    branch: string;\n    status: LeaseStatus;\n    ownerSession: string | undefined;\n    baseCommit: string | undefined;\n}',
   },
   {
     name: 'ListVersionsOptions',
@@ -7231,6 +7277,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface RunnerFailureRule {\n    allowedExitCodes?: readonly number[];\n    fatalSignatures: readonly string[];\n    informationalLines?: readonly string[];\n}',
   },
   {
+    name: 'Runtime',
+    declaration: 'export interface Runtime {\n    readonly ctx: Context;\n    readonly config: ResolvedConfig;\n}',
+  },
+  {
     name: 'SandboxEnforcement',
     declaration: 'export type SandboxEnforcement = \'full\' | \'partial\';',
   },
@@ -7997,6 +8047,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SettingsSecretView',
     declaration: 'export interface SettingsSecretView {\n    path: string[];\n    set: boolean;\n}',
+  },
+  {
+    name: 'Settlement',
+    declaration: 'export type Settlement = {\n    kind: \'removed\';\n    branch: string;\n} | ({\n    kind: \'kept\';\n} & KeptReport);',
   },
   {
     name: 'ShellExecRequest',
@@ -9128,11 +9182,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WidenSessionOutcome',
-    declaration: 'export type WidenSessionOutcome = {\n    readonly kind: \'unchanged\';\n    readonly revision: number | undefined;\n} | {\n    readonly kind: \'widened\';\n    readonly revision: number;\n} | {\n    readonly kind: \'declined\';\n};',
+    declaration: 'export type WidenSessionOutcome<Saved = void> = {\n    readonly kind: \'unchanged\';\n    readonly revision: number | undefined;\n    readonly saved: Saved;\n} | {\n    readonly kind: \'widened\';\n    readonly revision: number;\n    readonly saved: Saved;\n} | {\n    readonly kind: \'declined\';\n};',
   },
   {
     name: 'WidenSessionSteps',
-    declaration: 'export interface WidenSessionSteps {\n    readonly unsaved: readonly AllowedModelRoute[];\n    readonly ask: (routes: readonly AllowedModelRoute[]) => Promise<HumanApproval | undefined>;\n    readonly persist: (approval: HumanApproval | undefined) => Promise<void>;\n}',
+    declaration: 'export interface WidenSessionSteps<Saved = void> {\n    readonly unsaved: readonly AllowedModelRoute[];\n    readonly ask: (routes: readonly AllowedModelRoute[]) => Promise<HumanApproval | undefined>;\n    readonly persist: (approval: HumanApproval | undefined) => Promise<Saved>;\n}',
   },
   {
     name: 'WorkflowAgentEndInfo',

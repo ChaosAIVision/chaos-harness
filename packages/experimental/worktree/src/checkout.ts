@@ -4,6 +4,7 @@ import { PREPARE_DIRECTORY } from './directory.ts'
 import type { CommandResult, GitContext, Runtime } from './git-context.ts'
 import type { CreatedWorktree } from './types.ts'
 
+/** Fresh branch name and the local revision its checkout starts from. */
 export interface WorktreeSpec {
   branch: string
   revision: string
@@ -12,7 +13,11 @@ export interface WorktreeSpec {
 /** Reads Git configuration in a directory that selects the repository whose filters apply. */
 export type ConfigReader = (args: string[], allowedExitCodes: number[]) => Promise<CommandResult>
 
-/** Environment overrides that disable every configured clean, smudge, process, and required filter driver. */
+/**
+ * Environment overrides that disable every configured clean, smudge, process, and required filter driver.
+ * @param configure - reads filter configuration from the checkout's repository.
+ * @returns Git configuration overrides for every discovered filter driver.
+ */
 export async function filterOverrides(configure: ConfigReader): Promise<NodeJS.ProcessEnv> {
   const configured = await configure(['config', '--null', '--name-only', '--get-regexp', '^filter\\.'], [0, 1])
   const drivers = new Set<string>()
@@ -34,20 +39,32 @@ export async function filterOverrides(configure: ConfigReader): Promise<NodeJS.P
   return overrides
 }
 
+/**
+ * Describe a failed creation whose checkout or branch may remain on disk.
+ * @param branch - branch allocated for the checkout.
+ * @param path - allocated checkout directory.
+ * @param error - failure retained as the cause.
+ * @returns an error identifying the retained artifacts and underlying failure.
+ */
 export function incomplete(branch: string, path: string, error: unknown): Error {
   return new Error(`Could not finish worktree ${branch} at ${path}. Any created checkout and branch are retained. ${error instanceof Error ? error.message : String(error)}`, { cause: error })
 }
 
 /**
  * Create the branch and checkout for a spec. The caller's working directory is never changed.
+ * @param runtime - mounted providers and resolved worktree configuration.
+ * @param git - caller's directory, cancellation, and execution policy.
+ * @param spec - fresh branch name and locally resolvable revision.
  * @param onAdded - runs once Git has registered the worktree and before its files are written.
+ * @returns the canonical checkout path, new branch, resolved commit, and repository root.
  */
 export async function checkout(
   runtime: Runtime,
   git: GitContext,
-  { branch, revision }: WorktreeSpec,
+  spec: WorktreeSpec,
   onAdded?: (path: string) => Promise<void>,
 ): Promise<CreatedWorktree> {
+  const { branch, revision } = spec
   const { fs } = runtime.ctx
   const { cwd, signal } = git
   const run = git.git

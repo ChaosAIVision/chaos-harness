@@ -48,14 +48,23 @@ export class Leases {
 
   constructor(private readonly runtime: Runtime) {}
 
-  /** Start a delegate in a fresh lease and arrange its settlement. */
+  /**
+   * Start a delegate in a fresh lease and arrange its settlement.
+   * @param git - caller's directory, cancellation, and execution policy.
+   * @param repository - canonical source root and its resolved HEAD commit.
+   * @param session - owning Session id, also used to deliver reports from earlier crashed leases.
+   * @param start - starts the delegate in its lease directory.
+   * @param onKept - receives retained checkouts; callback failures are logged.
+   * @returns the activation, isolated directory, and settlement promise.
+   */
   async isolate<T extends IsolatedActivation>(
     git: GitContext,
-    { root, head }: Repository,
+    repository: Repository,
     session: string,
     start: (cwd: string) => Promise<T>,
     onKept: (report: KeptReport) => void,
   ): Promise<Isolated<T>> {
+    const { root, head } = repository
     await this.reapForSession(git, root, session, onKept)
     const base = await this.resolveBase(git, root, head)
     const branch = `${LEASE_PREFIX}${randomUUID().replaceAll('-', '').slice(0, 12)}`
@@ -96,11 +105,22 @@ export class Leases {
     }
   }
 
-  /** Settle every lease whose owner died. */
+  /**
+   * Settle every lease whose owner died.
+   * @param git - caller's cancellation and execution policy.
+   * @param root - canonical repository root to inspect.
+   * @returns settlements completed by this sweep.
+   */
   async reap(git: GitContext, root: string): Promise<Settlement[]> {
     return (await this.sweep(git, root)).map(entry => entry.settlement)
   }
 
+  /**
+   * List leases and orphaned lease branches without changing them.
+   * @param git - caller's cancellation and execution policy.
+   * @param root - canonical repository root to inspect.
+   * @returns checkout ownership and liveness summaries, including branches without a checkout.
+   */
   async list(git: GitContext, root: string): Promise<LeaseSummary[]> {
     const found = await this.inspectLeases(git, root)
     return [
