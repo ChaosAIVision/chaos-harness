@@ -7,6 +7,6 @@ header:
   class: subagent-continuable-inheritance
   pin: true
   systemPromptSource: session/text-turn
-  toolSchemasSource: session/text-turn
+  toolSchemasSource: sdk/approval
   childSystemPrompts: [1]
   childToolSchemas: [1]
