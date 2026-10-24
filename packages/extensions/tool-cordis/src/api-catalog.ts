@@ -3193,14 +3193,21 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'subagentModelSelection',
-    summary: 'Host settings owner that records Session authorization before the first model request.',
-    description: 'Host settings owner that records Session authorization before the first model request.',
+    summary: 'Host settings owner that records Session authorization before the first model request and widens it on approval.',
+    description: 'Host settings owner that records Session authorization before the first model request and widens it on approval.',
     methods: [
       {
         signature: 'registerAllowedModelsSource(source: AllowedModelsSource): () => void',
-        description: 'Register an operator-owned route source through the caller\'s effect lifecycle. Sources cannot change an existing Session policy and are sampled only when enabled is null.',
+        description: 'Register an operator-owned route source through the caller\'s effect lifecycle. Sources are sampled only when a fresh Session starts and enabled is null; they never alter a recorded policy.',
         parameters: [{ name: 'source', description: 'Callback returning authorized routes, or undefined when absent; failures reject Agent creation.' }],
         returns: 'Idempotent disposer that withdraws this registration.',
+      },
+      {
+        signature: 'async widenSession( agent: Agent, routes: readonly AllowedModelRoute[], steps: WidenSessionSteps, signal: AbortSignal, ): Promise<WidenSessionOutcome>',
+        description: 'Widen one running Session\'s authorized routes after a person confirms them, as one operation. Order is fixed: ask, persist, append. A decline, an absent answer, a `persist` rejection, or an abort appends nothing. Widening is monotone: the Session keeps every route it had and gains `routes`. A Session without a policy keeps its parent route. Authorization is never derived from file contents, so editing preferences outside this method grants nothing to a running Session.',
+        parameters: [{ name: 'agent', description: 'running Agent whose Session is widened.' }, { name: 'routes', description: 'exact routes the Session should be allowed to select.' }, { name: 'steps', description: 'host-owned ask and persist steps and the routes still to be saved.' }, { name: 'signal', description: 'cancellation for the whole operation.' }],
+        returns: '`unchanged` when the Session already allows every route and `unsaved` is empty (persist still runs without a proof), `widened` with the new revision after an appended entry, or `declined` when no proof was given.',
+        throws: ['when the operator setting is `enabled: false`, when a Session without a policy has no parent route, when the proof does not cover the missing routes, or when `persist` or the signal rejects.'],
       },
     ],
   },
@@ -5970,6 +5977,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'HostConnectionRpc',
     declaration: 'export interface HostConnectionRpc {\n    handle(channel: string, handler: ConnectionRpcHandler): () => Promise<void>;\n    intercept(channel: \'/api\', matches: ConnectionRpcEndpointMatcher, handler: ConnectionRpcHandler): () => Promise<void>;\n}',
+  },
+  {
+    name: 'HumanApproval',
+    declaration: 'export type HumanApproval = Approval;',
   },
   {
     name: 'ImageAttachmentLimits',
@@ -9114,6 +9125,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WeeklyScheduleRecord',
     declaration: 'export interface WeeklyScheduleRecord {\n    readonly id: ScheduleId;\n    readonly kind: \'weekly\';\n    readonly title: string;\n    readonly prompt: string;\n    readonly time: string;\n    readonly timeZone: string;\n    readonly weekdays: number[];\n    readonly scheduledAt: string;\n}',
+  },
+  {
+    name: 'WidenSessionOutcome',
+    declaration: 'export type WidenSessionOutcome = {\n    readonly kind: \'unchanged\';\n    readonly revision: number | undefined;\n} | {\n    readonly kind: \'widened\';\n    readonly revision: number;\n} | {\n    readonly kind: \'declined\';\n};',
+  },
+  {
+    name: 'WidenSessionSteps',
+    declaration: 'export interface WidenSessionSteps {\n    readonly unsaved: readonly AllowedModelRoute[];\n    readonly ask: (routes: readonly AllowedModelRoute[]) => Promise<HumanApproval | undefined>;\n    readonly persist: (approval: HumanApproval | undefined) => Promise<void>;\n}',
   },
   {
     name: 'WorkflowAgentEndInfo',
