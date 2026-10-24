@@ -33,7 +33,7 @@ const GIT_ENV: NodeJS.ProcessEnv = Object.fromEntries([
  * @param signal - operation cancellation.
  * @param allowedExitCodes - command-specific successful statuses.
  * @param env - command-local environment overrides, applied after Git selector removal.
- * @returns complete bounded stdout and the exit code.
+ * @returns complete bounded stdout, bounded stderr, and the exit code.
  */
 export async function runCommand(
   ctx: Context,
@@ -44,7 +44,7 @@ export async function runCommand(
   signal: AbortSignal,
   allowedExitCodes: readonly number[] = [0],
   env: NodeJS.ProcessEnv = {},
-): Promise<{ stdout: string; exitCode: number }> {
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   using timeout = deadline(signal, config.timeoutMs, 'WORKTREE_TIMEOUT')
   timeout.signal.throwIfAborted()
   const program = await ctx.subprocess.resolveExecutable(argv[0], undefined, timeout.signal)
@@ -76,7 +76,7 @@ export async function runCommand(
       throw new Error(`worktree command failed (${outcome.signal ?? outcome.exitCode}): ${stderr.text.trim()}`)
     }
     if (stdout.lossy) throw new Error('worktree command output exceeds maxOutputBytes')
-    return { stdout: stdout.text, exitCode: outcome.exitCode }
+    return { stdout: stdout.text, stderr: stderr.text, exitCode: outcome.exitCode }
   } finally {
     child.terminate()
     await child.waitForExit()
