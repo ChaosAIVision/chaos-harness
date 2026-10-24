@@ -60,7 +60,7 @@ Claude Code 插件声明了三件 Harness 没有直接对应物的事情：以 `
 
 内置资源的[引入清单](resources/pstack/upstream.json) 记录上游版本、来源归属、文件校验和，以及保留的许可证与声明文件。
 
-首次使用时，请让 agent 执行 `setup-pstack`。它使用 `claude_agent_models` 发现 provider/model id 及模型支持的档位，询问你希望使用哪些模型，然后调用 `claude_agent_setup`，将包含 `modelAliases` 和 `roles` 的 JSON 字符串作为 `preferences_json` 传入，还可提供 `defaultEffort` 和 `sessionHook`。如果不需要额外模型路由，可保留继承角色。对于新增别名路由，host 通过 `userQuestions` 请求用户直接确认：仅选择 `Authorize routes` 才会将这些路由保存到 `allowedModels`。取消或无法确认时，已保存的偏好保持不变。保存后打开全新会话以加载别名与授权；当前会话的权限不会改变。
+首次使用时，请让 agent 执行 `setup-pstack`。它使用 `claude_agent_models` 发现 provider/model id 及模型支持的档位，询问你希望使用哪些模型，然后调用 `claude_agent_setup`，将包含 `modelAliases` 和 `roles` 的 JSON 字符串作为 `preferences_json` 传入，还可提供 `defaultEffort` 和 `sessionHook`。如果不需要额外模型路由，可保留继承角色。对于新增别名路由，host 通过 `userQuestions` 请求用户直接确认：仅选择 `Authorize routes` 才会将这些路由保存到 `allowedModels`。取消或无法确认时，已保存的偏好保持不变。每次调用 `claude_agent` 和 `claude_agent_models` 都会重新读取别名，因此保存的变更在同一会话中生效。工具说明引导 agent 查询实时目录；初始化上下文列出 agent 创建时的别名。显式 profile 别名优先于保存的别名。授权仍按会话记录：打开全新会话以加载新批准的路由；当前会话的权限不会改变。更新插件代码本身时，如果未启用代码热重载，仍需重新加载插件或重启 host；实时读取偏好不会重新加载代码。
 
 生成的文件没有别名或额外授权路由。所有内置角色继承父模型，多成员面板保留各自独立的继承条目，`defaultEffort` 为 `session`，`sessionHook` 为 `true`。模型设置完成前，委派继承父路由，不会虚构别名。偏好无效或配置的根目录缺少指令文件时会失败，而非静默回退。
 

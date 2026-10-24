@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import { Config as ConfigSchema, install, loadPstackPreferences } from '@deepseek-ai/dsh-claude-compat'
+import { Config as ConfigSchema, install, loadPstackPreferences, pstackConfigPath } from '@deepseek-ai/dsh-claude-compat'
 import type { CompatHost, Config } from '@deepseek-ai/dsh-claude-compat'
 
 interface Activation {
@@ -110,6 +110,54 @@ describe('claude-compat discovery', () => {
       ],
       inherited: { provider: 'alpha', model: 'judge', allowed: true, efforts: ['high'] },
     }))
+  })
+
+  it('refreshes discovery, dispatch, and initialization after preferences change on the same installed instance', async () => {
+    const { tools, tool, contexts, activations } = harness({ modelAliases: { pinned: { provider: 'alpha', model: 'judge' } } })
+    const original = loadPstackPreferences()
+    const write = (modelAliases: Config['modelAliases']) => writeFile(pstackConfigPath(), JSON.stringify({ ...original, modelAliases }))
+    const discover = () => tools.get('claude_agent_models')!.execute({}, exec as never)
+    await write({ old: { provider: 'alpha', model: 'judge' } })
+    expect(await discover()).toMatchObject({ aliases: [expect.objectContaining({ alias: 'old' }), expect.objectContaining({ alias: 'pinned' })] })
+    await write({ astra: { provider: 'alpha', model: 'judge' }, sol: { provider: 'alpha', model: 'fast' }, pinned: { provider: 'alpha', model: 'fast' } })
+    expect(await discover()).toMatchObject({ aliases: [
+      expect.objectContaining({ alias: 'astra', allowed: true, efforts: ['high'] }),
+      expect.objectContaining({ alias: 'sol', allowed: false }),
+      expect.objectContaining({ alias: 'pinned', model: 'judge', allowed: true }),
+    ] })
+    expect(contexts[0]!()).toContain('astra => alpha/judge')
+    expect(contexts[0]!()).not.toContain('old =>')
+    expect(contexts[0]!()).not.toContain('Pstack models are not configured')
+    await tool.execute({ ...task, model: 'astra' }, exec as never)
+    await tool.execute({ ...task, model: 'pinned' }, exec as never)
+    expect(activations.map(item => item.spec.request.agentOptions)).toEqual([
+      { provider: 'alpha', model: 'judge' }, { provider: 'alpha', model: 'judge' },
+    ])
+    await expect(tool.execute({ ...task, model: 'sol' }, exec as never)).rejects.toThrow()
+    await expect(tool.execute({ ...task, model: 'old' }, exec as never)).rejects.toThrow('unknown model alias "old"; configured aliases: astra, sol, pinned')
+    await write({ astra: { provider: 'alpha', model: 'fast' } })
+    expect(await discover()).toMatchObject({ aliases: [
+      expect.objectContaining({ alias: 'astra', model: 'fast', allowed: false }),
+      expect.objectContaining({ alias: 'pinned', model: 'judge', allowed: true }),
+    ] })
+    await expect(tool.execute({ ...task, model: 'astra' }, exec as never)).rejects.toThrow()
+    await write({ astra: { provider: 'beta', model: 'judge' } })
+    await expect(tool.execute({ ...task, model: 'astra' }, exec as never)).rejects.toThrow()
+    expect(activations).toHaveLength(2)
+    await write({ astra: { provider: 'alpha', model: 'judge', reasoningEffort: 'unsupported' } })
+    await expect(tool.execute({ ...task, model: 'astra' }, exec as never)).rejects.toThrow('reasoning effort')
+    await write(original.modelAliases)
+    expect(await discover()).toMatchObject({ aliases: [expect.objectContaining({ alias: 'pinned' })] })
+    await expect(tool.execute({ ...task, model: 'astra' }, exec as never)).rejects.toThrow('unknown model alias')
+    expect(activations).toHaveLength(2)
+  })
+
+  it('fails discovery and dispatch on malformed refreshed preferences without using stale aliases', async () => {
+    const { tool, tools, activations } = harness({ modelAliases: { pinned: { provider: 'alpha', model: 'judge' } } })
+    await writeFile(pstackConfigPath(), '{broken')
+    await expect(tools.get('claude_agent_models')!.execute({}, exec as never)).rejects.toThrow('Cannot load')
+    await expect(tool.execute({ ...task, model: 'pinned' }, exec as never)).rejects.toThrow('Cannot load')
+    expect(activations).toHaveLength(0)
   })
 
   it('keeps healthy aliases and inherited discovery when another alias is stale', async () => {
@@ -294,7 +342,7 @@ describe('claude-compat routes', () => {
     })
     await tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model: 'opus' }, exec as never)
     expect(activations[0]?.spec.request.agentOptions).toEqual({ provider: 'alpha', model: 'judge', reasoningEffort: 'high' })
-    expect(tool.description).toContain('opus => alpha/judge @high')
+    expect(tool.description).toContain('Call claude_agent_models for the current aliases; discovery is authoritative.')
   })
 
   it.each(['auto', 'inherit-parent'])('omits child options for %s', async (model) => {

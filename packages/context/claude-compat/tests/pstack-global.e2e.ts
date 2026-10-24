@@ -189,6 +189,45 @@ it('persists setup and loads named and generic authorized routes from two unrela
   }
 }, 90_000)
 
+it('discovers and dispatches aliases written after installation without reloading the running profile', async () => {
+  const f = await fixture()
+  try {
+    f.installRoot()
+    const filename = join(f.home, 'pstack', 'config.json')
+    mkdirSync(join(f.home, 'pstack'), { recursive: true })
+    const preferences = { version: 1, root: f.root, roles: {},
+      allowedModels: [{ provider: 'global-review', model: 'review-model' }],
+      modelAliases: { old: { provider: 'global-review', model: 'review-model' } } }
+    writeFileSync(filename, JSON.stringify(preferences))
+    let dispatched = false
+    f.respond((wire) => {
+      if (!JSON.stringify(wire.body.messages).includes('REFRESH_SAME_SESSION')) return [{ type: 'text', text: 'REFRESH_CHILD_RESULT' }]
+      if (dispatched) return [{ type: 'text', text: 'Refresh checked.' }]
+      dispatched = true
+      // The first model request occurs after compat installation and Session policy capture.
+      writeFileSync(filename, JSON.stringify({ ...preferences,
+        modelAliases: { astra: { provider: 'global-review', model: 'review-model' }, sol: { provider: 'global-blocked', model: 'review-model' } },
+        allowedModels: [...preferences.allowedModels, { provider: 'global-blocked', model: 'review-model' }],
+      }))
+      return [
+        { type: 'tool_use', id: 'refreshed-discovery', name: 'claude_agent_models', input: {} },
+        ...['astra', 'sol', 'old'].map((model): ToolUse => ({ type: 'tool_use', id: `refresh-${model}`, name: 'claude_agent', input: {
+          description: 'Same session alias probe', prompt: 'REFRESH_CHILD_TASK', model,
+        } })),
+      ]
+    })
+    await f.launch(f.directories[0]!, 'REFRESH_SAME_SESSION')
+    assert.ok(f.requests.some(wire => wire.route === 'global-review' && JSON.stringify(wire.body.messages).includes('REFRESH_CHILD_TASK')))
+    assert.ok(!f.requests.some(wire => wire.route === 'global-blocked'), 'preference refresh changed captured Session authorization')
+    const logs = sessionLogs(f.home).join('\n')
+    assert.ok(logs.includes('unknown model alias \\"old\\"'), 'removed alias did not fail explicitly')
+    assert.ok(logs.includes('astra') && logs.includes('sol') && logs.includes('aliases'), 'fresh discovery was not logged')
+    assert.ok(logs.includes('REFRESH_CHILD_RESULT'), 'refreshed route did not deliver a child result')
+  } finally {
+    await f.close()
+  }
+}, 45_000)
+
 it('resolves shipped Web compat from either unrelated cwd without a command-line patch', async () => {
   const f = await fixture()
   try {

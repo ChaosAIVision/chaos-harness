@@ -67,7 +67,7 @@ export interface Config {
    * parent route.
    */
   models: Record<string, RouteConfig>
-  /** Model-only names resolved to operator-configured routes; aliases do not grant Session authorization. */
+  /** Model-only routes overriding fresh home-scoped aliases; aliases do not grant Session authorization. */
   modelAliases: Record<string, RouteConfig>
   /** Native pstack initialization; replaces this root's bridged SessionStart. */
   pstack?: {
@@ -210,10 +210,10 @@ function parseEffort(value: unknown, source: string): string {
  */
 export function install(host: CompatHost, config: Config): void {
   const preferences = config.pstack === undefined ? loadPstackPreferences() : undefined
-  config = { roots: config.roots, provider: config.provider, models: config.models,
-    modelAliases: { ...preferences?.modelAliases, ...config.modelAliases },
-    pstack: config.pstack, modelSelection: config.modelSelection, hooks: config.hooks,
-    ...config.projectDir === undefined ? {} : { projectDir: config.projectDir } }
+  const modelAliases = () => ({
+    ...config.pstack === undefined ? loadPstackPreferences().modelAliases : {},
+    ...config.modelAliases,
+  })
   const roots = [...new Set([...config.roots.map(root => absoluteFrom(root, process.cwd())),
     ...preferences === undefined ? [] : [preferences.root ?? bundledPstackRoot()]])]
   const agents: NamedAgent[] = [
@@ -221,21 +221,18 @@ export function install(host: CompatHost, config: Config): void {
     ...roots.flatMap(root => discoverAgents(root)),
   ]
   const byType = new Map(agents.map(agent => [agent.type, agent]))
-  const aliasCatalog = Object.entries(config.modelAliases).map(([alias, route]) =>
-    `${alias} => ${route.provider}/${route.model}${route.reasoningEffort === undefined ? '' : ` @${route.reasoningEffort}`}`,
-  ).join(', ') || '(none)'
   const adaptation = [
     'For every pstack Agent call, generic or named, use claude_agent, not the standard subagent tool.',
     'Use general-purpose (or omit subagent_type) for generic panel members; model aliases resolve identically for all types.',
     'Dispatch is asynchronous; run_in_background: true is accepted. Map SendMessage to send_message(agent_id, message); TaskStop to interrupt_agent(agent_id) (requests interruption, does not await exit); TaskOutput to list_agents for status, with completion delivered automatically as a message.',
     'Load skills with the skill tool using the exact catalog name; when the catalog uses bare names, pstack:poteto-mode means poteto-mode.',
-    'For setup-pstack, available model names are the configured aliases below plus auto and inherit-parent. Use claude_agent_models to discover each alias route, Session authorization, and exact-model reasoning efforts (plus the inherited route). Never infer an effort is supported from its name.',
+    'For setup-pstack, available model names are the current configured aliases plus auto and inherit-parent. Use claude_agent_models to discover each alias route, Session authorization, and exact-model reasoning efforts (plus the inherited route). Never infer an effort is supported from its name.',
     'Effort-agent declarations apply their effort to the selected model, including auto and inherit-parent. Unsupported efforts fail explicitly.',
     'Pass model as a configured alias without provider; auto or inherit-parent inherits the parent model. reasoning_effort can change only its effort.',
     'Strip @effort from each saved role or panel entry and pass reasoning_effort separately (or select the declared effort agent). Entries without a suffix use default effort; absent default or session passes reasoning_effort: session to preserve the parent effort, overriding alias defaults. Never collapse panel entries, including inherited entries.',
     'Aliases name routes, not authorization: explicit selections require the recorded Session policy, or the parent route when no policy is recorded.',
     'Explicit type and wildcard routes are authoritative when modelSelection is off; conflicting model choices fail rather than being ignored.',
-    `Configured model aliases: ${aliasCatalog}.`,
+    'Model aliases can change during this session. Call claude_agent_models for the current aliases; discovery is authoritative.',
   ].join('\n')
   const pstackRoot = config.pstack === undefined
     ? preferences?.root ?? bundledPstackRoot() : absoluteFrom(config.pstack.root, process.cwd())
@@ -258,9 +255,14 @@ export function install(host: CompatHost, config: Config): void {
       const hookOff = sheet.split('\n').includes('session hook: off')
       const roles = sheet.split('\n').filter(line => /^[a-z][a-z ,_-]*: .+$/.test(line)
         && !line.startsWith('session hook:'))
+      const aliases = modelAliases()
+      const aliasCatalog = Object.entries(aliases).map(([alias, route]) =>
+        `${alias} => ${route.provider}/${route.model}${route.reasoningEffort === undefined ? '' : ` @${route.reasoningEffort}`}`,
+      ).join(', ') || '(none)'
       return [hookOff || isChild ? '' : readFileSync(mandatePath, 'utf8').trim(), adaptation,
+        `Configured model aliases at initialization: ${aliasCatalog}.`,
         `Saved pstack model choices (${config.pstack === undefined ? '$DSH_HOME/pstack/config.json' : JSON.stringify(sheetPath)}); use these role choices with claude_agent:`, ...roles,
-        preferences !== undefined && Object.keys(preferences.modelAliases).length === 0
+        preferences !== undefined && Object.keys(aliases).length === 0
           ? 'Pstack models are not configured. Ask the user which models to use via setup-pstack; discover models with claude_agent_models and save with claude_agent_setup. Until configured, inherit the parent route; never invent aliases.' : '',
       ].join('\n\n')
     })
@@ -317,6 +319,7 @@ export function install(host: CompatHost, config: Config): void {
       const parent = exec.agent
       if (parent === undefined) throw new Error('claude_agent requires a calling agent')
 
+      const aliases = modelAliases()
       const parentOptions = parentAgentOptionsForDelegation(parent)
       const configured = config.models[agent.type] ?? config.models['*']
       let route: Partial<RouteConfig> | undefined = configured
@@ -328,9 +331,9 @@ export function install(host: CompatHost, config: Config): void {
         route = { provider: args.provider, model: args.model }
       } else if (args.model !== undefined) {
         const inherit = args.model === 'auto' || args.model === 'inherit-parent'
-        const selected = inherit ? undefined : config.modelAliases[args.model]
+        const selected = inherit ? undefined : aliases[args.model]
         if (!inherit && selected === undefined) {
-          throw new Error(`unknown model alias "${args.model}"; configured aliases: ${Object.keys(config.modelAliases).join(', ') || '(none)'}; use auto or inherit-parent to inherit`)
+          throw new Error(`unknown model alias "${args.model}"; configured aliases: ${Object.keys(aliases).join(', ') || '(none)'}; use auto or inherit-parent to inherit`)
         }
         if (configured !== undefined && !config.modelSelection
           && (configured.provider !== (selected?.provider ?? parentOptions.provider)
@@ -417,6 +420,7 @@ export function install(host: CompatHost, config: Config): void {
     async execute(_args, exec) {
       const parent = exec.agent
       if (parent === undefined) throw new Error('claude_agent_models requires a calling agent')
+      const aliases = modelAliases()
       const llm = host.llm
       if (llm === undefined) throw new Error('cannot discover model aliases: llm service is unavailable')
       const parentOptions = parentAgentOptionsForDelegation(parent)
@@ -443,7 +447,7 @@ export function install(host: CompatHost, config: Config): void {
         })))
       return {
         catalog,
-        aliases: await Promise.all(Object.entries(config.modelAliases).map(async ([alias, route]) => {
+        aliases: await Promise.all(Object.entries(aliases).map(async ([alias, route]) => {
           try {
             return { alias, ...await describe(route) }
           } catch (error) {
@@ -459,7 +463,7 @@ export function install(host: CompatHost, config: Config): void {
 
   if (preferences !== undefined) host.registerTool(defineTool({
     name: 'claude_agent_setup',
-    description: 'Save home-scoped pstack aliases and role choices after asking the user which models to use. Discover provider/model ids with claude_agent_models first. New routes require a separate direct human confirmation through the host question service; unavailable or declined confirmation saves nothing. Restart or open a fresh session after setup.',
+    description: 'Save home-scoped pstack aliases and role choices after asking the user which models to use. Discover provider/model ids with claude_agent_models first. New routes require a separate direct human confirmation through the host question service; unavailable or declined confirmation saves nothing. Saved aliases are available on the next discovery or dispatch; existing Session authorization is unchanged.',
     parameters: {
       preferences_json: { type: 'string', required: true, description: 'JSON object with modelAliases (alias -> {provider,model,reasoningEffort?}) and roles (role -> alias or comma-separated alias@effort entries). Optional defaultEffort and sessionHook controls are accepted; do not supply allowedModels.' },
     },
@@ -507,7 +511,7 @@ export function install(host: CompatHost, config: Config): void {
         throw new Error('Pstack model setup was not authorized by the user; no preferences were saved')
       }
       exec.signal.throwIfAborted()
-      return `Saved ${savePstackPreferences(value, routes)}. Open a fresh session to load aliases. Explicit model choices still require host-owned Session authorization.`
+      return `Saved ${savePstackPreferences(value, routes)}. Aliases are available on the next discovery or dispatch. Explicit model choices still require host-owned Session authorization.`
     },
   }))
 
