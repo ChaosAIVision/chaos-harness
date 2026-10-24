@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest'
-import { parseRoleLines, preferenceRoleLines, renderRoleSheet, splitRoleLines } from '../src/role-sheet.ts'
-import type { PstackPreferences } from '../src/pstack-config.ts'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { loadRoleSheet, parseRoleSheetFile, renderRoleSheet } from '../src/role-sheet.ts'
+import { savePstackPreferences } from '../src/pstack-config.ts'
 
 const aliases = { fast: { provider: 'alpha', model: 'fast', reasoningEffort: 'low' }, deep: { provider: 'beta', model: 'big' } }
-const input = { lines: ['bug-fix: deep', 'default effort: session'], aliases, source: '$DSH_HOME/pstack/config.json', unconfiguredHint: false }
+const input = { choices: { roles: { 'bug-fix': 'deep' }, defaultEffort: 'session' }, aliases, source: '$DSH_HOME/pstack/config.json', unconfiguredHint: false }
 
 describe('renderRoleSheet', () => {
   it('is pure and starts with a digest header that supersedes earlier sheets', () => {
@@ -15,9 +18,9 @@ describe('renderRoleSheet', () => {
     expect(first.text).toContain('bug-fix: deep')
   })
   it.each([
-    ['a role', { lines: ['bug-fix: fast', 'default effort: session'] }],
+    ['a role', { choices: { roles: { 'bug-fix': 'fast' }, defaultEffort: 'session' } }],
     ['an alias', { aliases: { ...aliases, extra: { provider: 'gamma', model: 'x' } } }],
-    ['the default effort', { lines: ['bug-fix: deep', 'default effort: high'] }],
+    ['the default effort', { choices: { roles: { 'bug-fix': 'deep' }, defaultEffort: 'high' } }],
   ])('changes its digest when %s changes', (_name, change) => {
     expect(renderRoleSheet({ ...input, ...change }).digest).not.toBe(renderRoleSheet(input).digest)
   })
@@ -28,23 +31,38 @@ describe('renderRoleSheet', () => {
   })
 })
 
-describe('role lines', () => {
-  it('parses a saved sheet, dropping the session hook line', () => {
-    expect(parseRoleLines('session hook: off\nbug-fix: opus\ndefault effort: high\nnot a line')).toEqual({
-      sessionHookOff: true, lines: ['bug-fix: opus', 'default effort: high'],
+describe('role choices', () => {
+  let home = ''
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'role-sheet-'))
+    vi.stubEnv('DSH_HOME', join(home, 'dsh'))
+    vi.stubEnv('DSH_AGENTS_HOME', join(home, 'shared'))
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    rmSync(home, { recursive: true, force: true })
+  })
+
+  it('parses a saved sheet, dropping the session hook line and splitting roles from the default effort', () => {
+    expect(parseRoleSheetFile('session hook: off\nbug-fix: opus\narena runners: a, b @high\ndefault effort: high\nnot a line')).toEqual({
+      hookOff: true,
+      choices: { roles: { 'bug-fix': 'opus', 'arena runners': 'a, b @high' }, defaultEffort: 'high' },
     })
   })
-  it('derives lines from preferences with shipped defaults for unsaved roles', () => {
-    const preferences: PstackPreferences = { version: 1, modelAliases: {}, roles: { 'bug-fix': 'deep' }, allowedModels: [], sessionHook: false }
-    const { lines, sessionHookOff } = preferenceRoleLines(preferences)
-    expect(sessionHookOff).toBe(true)
-    expect(lines).toContain('bug-fix: deep')
-    expect(lines).toContain('perf-issue: inherit-parent')
-    expect(lines.at(-1)).toBe('default effort: session')
+  it('loads preferences with shipped defaults for unsaved roles', () => {
+    savePstackPreferences({ modelAliases: { deep: { provider: 'beta', model: 'big' } }, roles: { 'bug-fix': 'deep' }, sessionHook: false })
+    const loaded = loadRoleSheet(undefined)
+    expect(loaded.hookOff).toBe(true)
+    expect(loaded.source).toBe('$DSH_HOME/pstack/config.json')
+    expect(loaded.choices.roles['bug-fix']).toBe('deep')
+    expect(loaded.choices.roles['perf-issue']).toBe('inherit-parent')
+    expect(loaded.choices.defaultEffort).toBe('session')
   })
-  it('splits lines into roles and the default effort', () => {
-    expect(splitRoleLines(['bug-fix: deep', 'arena runners: a, b @high', 'default effort: high'])).toEqual({
-      roles: { 'bug-fix': 'deep', 'arena runners': 'a, b @high' }, defaultEffort: 'high',
-    })
+  it('loads a sheet file, including a UTF-16 one, and shows its quoted path as the source', () => {
+    const file = join(home, 'sheet.md')
+    writeFileSync(file, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('bug-fix: deep\r\ndefault effort: low\r\n', 'utf16le')]))
+    const loaded = loadRoleSheet(file)
+    expect(loaded.choices).toEqual({ roles: { 'bug-fix': 'deep' }, defaultEffort: 'low' })
+    expect(loaded.source).toBe(JSON.stringify(file))
   })
 })

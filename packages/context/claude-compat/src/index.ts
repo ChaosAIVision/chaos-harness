@@ -40,9 +40,9 @@ import * as filesystemSkills from '@deepseek-ai/dsh-skill-filesystem'
 import { bundledPstackRoot } from './pstack-resources.ts'
 export { bundledPstackRoot } from './pstack-resources.ts'
 import { parse as parseYaml } from 'yaml'
-import { assertSetupUpdate, loadPstackPreferences, pstackConfigPath, savePstackPreferences } from './pstack-config.ts'
-import { contextMessage, parseRoleLines, preferenceRoleLines, renderRoleSheet, splitRoleLines } from './role-sheet.ts'
-import type { RoleSheet } from './role-sheet.ts'
+import { assertSetupUpdate, loadPstackPreferences, savePstackPreferences } from './pstack-config.ts'
+import { contextMessage, loadRoleSheet, renderRoleSheet } from './role-sheet.ts'
+import type { RoleChoices, RoleSheet } from './role-sheet.ts'
 export { loadPstackPreferences, parsePstackPreferences, pstackConfigPath, savePstackPreferences } from './pstack-config.ts'
 
 export const name = 'experimental-claude-compat'
@@ -257,28 +257,17 @@ export function install(host: CompatHost, config: Config): void {
   ].join('\n')
   const pstackRoot = config.pstack === undefined
     ? preferences?.root ?? bundledPstackRoot() : absoluteFrom(config.pstack.root, process.cwd())
-  const sheetPath = config.pstack === undefined ? pstackConfigPath() : absoluteFrom(config.pstack.sheetPath, process.cwd())
-  const currentSheet = (): {
-    readonly sheet: RoleSheet
-    readonly hookOff: boolean
-    readonly roles: Record<string, string>
-    readonly defaultEffort: string | undefined
-  } => {
-    const parsed = config.pstack === undefined
-      ? preferenceRoleLines(loadPstackPreferences())
-      : (() => {
-        const bytes = readFileSync(sheetPath)
-        return parseRoleLines(bytes.toString(bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf16le' : 'utf8')
-          .replace(/^\uFEFF/, '').replace(/\r\n/g, '\n'))
-      })()
+  const sheetPath = config.pstack === undefined ? undefined : absoluteFrom(config.pstack.sheetPath, process.cwd())
+  const currentSheet = (): { readonly sheet: RoleSheet; readonly hookOff: boolean; readonly choices: RoleChoices } => {
+    const loaded = loadRoleSheet(sheetPath)
     const aliases = modelAliases()
     return {
-      hookOff: parsed.sessionHookOff,
-      ...splitRoleLines(parsed.lines),
+      hookOff: loaded.hookOff,
+      choices: loaded.choices,
       sheet: renderRoleSheet({
-        lines: parsed.lines,
+        choices: loaded.choices,
         aliases,
-        source: config.pstack === undefined ? '$DSH_HOME/pstack/config.json' : JSON.stringify(sheetPath),
+        source: loaded.source,
         unconfiguredHint: preferences !== undefined && Object.keys(aliases).length === 0,
       }),
     }
@@ -475,11 +464,11 @@ export function install(host: CompatHost, config: Config): void {
           provider: provider.id,
           models: (await listModels(provider.id)).map(model => ({ id: model.id, name: model.name })),
         })))
-      const { sheet, roles, defaultEffort } = currentSheet()
+      const { sheet, choices } = currentSheet()
       return {
         catalog,
-        roles,
-        ...defaultEffort === undefined ? {} : { defaultEffort },
+        roles: choices.roles,
+        ...choices.defaultEffort === undefined ? {} : { defaultEffort: choices.defaultEffort },
         ...policy?.revision === undefined ? {} : { policyRevision: policy.revision },
         sheetDigest: sheet.digest,
         aliases: await Promise.all(Object.entries(aliases).map(async ([alias, route]) => {
