@@ -533,6 +533,108 @@ describe('SubagentHeaderLineage', () => {
     expect(input.openChild).toHaveBeenCalledWith({ parentSessionId: PARENT, childSessionId: CHILD, mode: 'unknown' })
   })
 
+  it('removes completed children while the child-bound sibling switcher stays open', () => {
+    const input = props(catalog(), {}, undefined, { parentSessionId: PARENT, childSessionId: CHILD, mode: 'continuable' })
+    let state = input.useSessions(value => value)
+    let statuses: SessionStatusSnapshot = new Map([[CHILD, {
+      running: true, completionUnread: false, pendingInteraction: undefined,
+    }]])
+    const useSessions: typeof input.useSessions = select => select(state)
+    const useSessionStatus: typeof input.useSessionStatus = select => select(statuses)
+    const view = render(<SubagentHeaderLineage {...input} lineageSessionId={CHILD}
+      useSessions={useSessions} useSessionStatus={useSessionStatus}
+    />)
+    hoverCatalog(screen.getByRole('button', { name: /worker/ }))
+    expect(screen.getByRole('treeitem', { name: /worker/ })).toBeTruthy()
+
+    state = { ...state, byId: { ...state.byId, [CHILD]: {
+      ...summary(CHILD, 1), running: false,
+      projectionValues: { subagentTiming: { settledMs: 1_000, lastTurnCompleted: true } },
+    } } }
+    statuses = new Map([[CHILD, { running: false, completionUnread: false, pendingInteraction: undefined }]])
+    view.rerender(<SubagentHeaderLineage {...input} lineageSessionId={CHILD}
+      useSessions={useSessions} useSessionStatus={useSessionStatus}
+    />)
+    expect(screen.queryByRole('treeitem', { name: /worker/ })).toBeNull()
+    expect(screen.getByRole('treeitem', { name: /reviewer/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /worker/ }).getAttribute('aria-expanded')).toBe('true')
+    expect(state.projectionsBySession[PARENT]?.values.subagentCatalog).toHaveLength(2)
+    expect(input.openChild).not.toHaveBeenCalled()
+    expect(input.openChildAside).not.toHaveBeenCalled()
+
+    statuses = new Map([[CHILD, { running: true, completionUnread: false, pendingInteraction: undefined }]])
+    view.rerender(<SubagentHeaderLineage {...input} lineageSessionId={CHILD}
+      useSessions={useSessions} useSessionStatus={useSessionStatus}
+    />)
+    expect(screen.getByRole('treeitem', { name: /worker.*正在运行/ })).toBeTruthy()
+    expect(screen.getAllByRole('treeitem')).toHaveLength(2)
+  })
+
+  it('preserves children without proven completion and external tasks in the header catalog', () => {
+    const entries = [
+      { id: CHILD, mode: 'continuable', label: 'pending', activity: 'inactive' },
+      { id: 'unknown' as SessionId, mode: 'unknown', label: 'unknown', activity: 'inactive' },
+      { id: 'failed' as SessionId, mode: 'one-shot', label: 'failed', activity: 'inactive' },
+      { id: 'external' as SessionId, mode: 'external', label: 'external', activity: 'inactive' },
+    ] satisfies CatalogFixtureEntry[]
+    const input = props(catalog({ entries }), {}, {
+      [CHILD]: summary(CHILD, 1),
+      failed: { ...summary('failed' as SessionId, 1), projectionValues: {
+        subagentTiming: { settledMs: 1_000, lastTurnCompleted: false },
+      } },
+      external: { ...summary('external' as SessionId, 1), projectionValues: {
+        subagentTiming: { settledMs: 1_000, lastTurnCompleted: true },
+      } },
+    }, { parentSessionId: PARENT, childSessionId: CHILD, mode: 'continuable' })
+    render(<SubagentHeaderLineage {...input} lineageSessionId={CHILD} />)
+    hoverCatalog(screen.getByRole('button', { name: /pending/ }))
+    expect(screen.getAllByRole('treeitem')).toHaveLength(4)
+    expect(screen.getByRole('treeitem', { name: /unknown/ })).toBeTruthy()
+    expect(screen.getByRole('treeitem', { name: /external/ }).getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('retains completed ancestor paths to deeper running descendants', () => {
+    const active = 'active-descendant' as SessionId
+    const entries = (id: SessionId, label: string, activity: 'running' | 'inactive'): CatalogFixtureEntry[] => [
+      { id, label, activity, mode: 'continuable' },
+    ]
+    const completed = (id: SessionId): SessionSummary => ({
+      ...summary(id, 1),
+      projectionValues: { subagentTiming: { settledMs: 1_000, lastTurnCompleted: true } },
+    })
+    const input = props(catalog({ entries: entries(CHILD, 'worker', 'inactive') }), {
+      [CHILD]: catalog({ entries: entries(GRANDCHILD, 'indexer', 'inactive') }),
+      [GRANDCHILD]: catalog({ entries: entries(active, 'deep worker', 'running') }),
+    }, {
+      [CHILD]: completed(CHILD), [GRANDCHILD]: completed(GRANDCHILD),
+      [active]: { ...summary(active, 1), running: true },
+    }, { parentSessionId: PARENT, childSessionId: CHILD, mode: 'continuable' })
+    render(<SubagentHeaderLineage {...input} lineageSessionId={CHILD} />)
+    hoverCatalog(screen.getByRole('button', { name: /worker/ }))
+    expect(screen.getByRole('treeitem', { name: /worker.*已完成/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '展开 worker 的下级子智能体' }))
+    fireEvent.click(screen.getByRole('button', { name: '展开 indexer 的下级子智能体' }))
+    expect(screen.getByRole('treeitem', { name: /deep worker.*正在运行/ })).toBeTruthy()
+  })
+
+  it('keeps a completed selected child title and its parent breadcrumb address', () => {
+    const input = props(catalog(), {}, {
+      [CHILD]: { ...summary(CHILD, 1), parentId: PARENT, origin: 'subagent',
+        projectionValues: { subagentTiming: { settledMs: 1_000, lastTurnCompleted: true } },
+      },
+    }, { parentSessionId: PARENT, childSessionId: CHILD, mode: 'continuable' })
+    const openTitle = vi.fn()
+    render(<SubagentHeaderLineage {...input} lineageSessionId={CHILD} displayTitle="Child title" openTitle={openTitle} />)
+    const trigger = screen.getByRole('button', { name: /worker/ })
+    hoverCatalog(trigger)
+    expect(screen.queryByRole('treeitem', { name: /worker/ })).toBeNull()
+    expect(screen.getByRole('treeitem', { name: /reviewer/ })).toBeTruthy()
+    expect(trigger.textContent).toContain('worker')
+    fireEvent.click(trigger)
+    expect(openTitle).toHaveBeenCalledOnce()
+    expect(input.openChild).not.toHaveBeenCalled()
+  })
+
   it('shows durable completion and token totals, ticks active duration, and freezes inactive rows', async () => {
     const now = 2_000_000_000_000
     const minute = 60_000
