@@ -23,7 +23,10 @@ export class TerminalCatalog {
       ...Object.entries(t.commands).map(([name, description]) => ({ name, description, kind: 'terminal' as const }))]
   }
 
-  /** Read slash discovery. @returns the latest successful catalog, including terminal-local commands. */
+  /**
+   * Read slash discovery.
+   * @returns the latest successful catalog, including terminal-local commands.
+   */
   list(): readonly TerminalCommand[] { return this.commands }
 
   /**

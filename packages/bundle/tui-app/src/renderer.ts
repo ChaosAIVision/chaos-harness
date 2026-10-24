@@ -116,10 +116,16 @@ export class TerminalRenderer implements Component {
     this.started = false
   }
 
-  /** Install editor discovery. @param provider - the live Host/skill/local slash catalog. */
+  /**
+   * Install editor discovery.
+   * @param provider - the live Host/skill/local slash catalog.
+   */
   setAutocomplete(provider: AutocompleteProvider): void { this.editor.setAutocompleteProvider(provider) }
 
-  /** Publish a terminal frame. @param state - current presentation from the retained Client Session. */
+  /**
+   * Publish a terminal frame.
+   * @param state - current presentation from the retained Client Session.
+   */
   update(state: { title: string; rows: readonly TranscriptRow[]; footer: string }): void {
     this.title = terminalText(state.title)
     this.rows = state.rows
@@ -127,7 +133,10 @@ export class TerminalRenderer implements Component {
     this.tui.requestRender()
   }
 
-  /** Retire an accepted draft. @param text - accepted prompt to record in editor history. */
+  /**
+   * Retire an accepted draft.
+   * @param text - accepted prompt to record in editor history.
+   */
   accepted(text: string): void {
     this.editor.addToHistory(text)
     if (this.editor.getExpandedText() === text) this.editor.setText('')
@@ -138,7 +147,10 @@ export class TerminalRenderer implements Component {
   /** Re-enable submission after admission or a visible failure, retaining an unaccepted draft. */
   submissionFinished(): void { this.editor.disableSubmit = false; this.tui.requestRender() }
 
-  /** Report an operation outcome. @param text - user-visible operation result or failure. */
+  /**
+   * Report an operation outcome.
+   * @param text - user-visible operation result or failure.
+   */
   notice(text: string): void { this.status = terminalText(text); this.tui.requestRender() }
 
   /** Invalidate width-dependent primitive caches. */
