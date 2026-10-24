@@ -85,7 +85,7 @@ export class WorktreeService extends Service {
   private readonly runtime: Runtime
   private readonly leases: Leases
   private readonly lifetime = new AbortController()
-  private readonly pending = new Set<Promise<CreatedWorktree>>()
+  private readonly pending = new Set<Promise<unknown>>()
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'worktrees')
@@ -156,7 +156,8 @@ export class WorktreeService extends Service {
    * @param start - starts the delegate in the directory it must use and returns its activation.
    * @param onKept - receives each checkout this call or a previous crashed run of this Session left behind; failures are logged.
    * @param signal - cancellation of provisioning only; settlement always runs to completion.
-   * @returns the activation, where it runs, and a promise for the settlement.
+   * @returns the activation, where it runs, and a promise for the settlement. Service disposal aborts provisioning
+   * and waits for admitted activations to stop and settle; the activation owner remains responsible for stopping them.
    */
   async isolate<T extends IsolatedActivation>(
     agent: Agent,
@@ -165,13 +166,20 @@ export class WorktreeService extends Service {
     onKept: (report: KeptReport) => void,
     signal?: AbortSignal,
   ): Promise<Isolated<T>> {
-    return this.withRepository(
+    const operation = this.withRepository<Isolated<T>>(
       agent, signal, request.cwd,
       (git, source) => this.leases.isolate(git, source, String(agent.session.id), start, onKept),
       async (git, reason) => ({
         activation: await start(git.cwd), isolation: { kind: 'degraded', cwd: git.cwd, reason }, settled: Promise.resolve(undefined),
       }),
     )
+    const completion = operation.then(isolated => isolated.settled)
+    this.pending.add(completion)
+    void completion.then(
+      () => { this.pending.delete(completion) },
+      () => { this.pending.delete(completion) },
+    )
+    return operation
   }
 
   /**
