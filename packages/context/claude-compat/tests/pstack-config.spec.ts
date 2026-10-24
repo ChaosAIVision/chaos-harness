@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { bundledPstackRoot, install, loadPstackPreferences, parsePstackPreferences, pstackConfigPath, savePstackPreferences } from '../src/index.ts'
 import type { CompatHost } from '../src/index.ts'
+import { mintHumanApproval } from '@deepseek-ai/dsh-tool-subagent'
 
 let home = ''
 let root = ''
@@ -98,6 +99,19 @@ describe('home-scoped pstack preferences', () => {
     const before = readFileSync(pstackConfigPath(), 'utf8')
     expect(() => savePstackPreferences({ allowedModels: [{ provider: 'evil', model: 'other' }] })).toThrow('operator-owned')
     expect(readFileSync(pstackConfigPath(), 'utf8')).toBe(before)
+  })
+  it('adds routes to allowedModels only with a human approval proof, without duplicates', () => {
+    installed()
+    persist({ ...loadPstackPreferences(), allowedModels: [{ provider: 'test', model: 'judge' }] })
+    savePstackPreferences({ roles: {} }, mintHumanApproval([{ provider: 'test', model: 'judge' }, { provider: 'test', model: 'fast' }]))
+    expect(loadPstackPreferences().allowedModels).toEqual([{ provider: 'test', model: 'judge' }, { provider: 'test', model: 'fast' }])
+  })
+  it('cannot be handed a forged approval at compile time', () => {
+    const forge = () => {
+      // @ts-expect-error an object literal is not a HumanApproval; only mintHumanApproval constructs one
+      savePstackPreferences({ roles: {} }, { routes: [{ provider: 'evil', model: 'other' }] })
+    }
+    expect(forge).toBeTypeOf('function')
   })
   it('loads the same native mandate and role sheet for unrelated working directories', () => {
     installed()
