@@ -60,7 +60,7 @@ Claude Code 插件声明了三件 Harness 没有直接对应物的事情：以 `
 
 内置资源的[引入清单](resources/pstack/upstream.json) 记录上游版本、来源归属、文件校验和，以及保留的许可证与声明文件。
 
-首次使用时，请让 agent 执行 `setup-pstack`。它使用 `claude_agent_models` 发现 provider/model id 及模型支持的档位，询问你希望使用哪些模型，然后调用 `claude_agent_setup`，将包含 `modelAliases` 和 `roles` 的 JSON 字符串作为 `preferences_json` 传入，还可提供 `defaultEffort` 和 `sessionHook`。如果不需要额外模型路由，可保留继承角色。对于新增别名路由，host 通过 `userQuestions` 请求用户直接确认：仅选择 `Authorize routes` 才会将这些路由保存到 `allowedModels`。取消或无法确认时，已保存的偏好保持不变。每次调用 `claude_agent` 和 `claude_agent_models` 都会重新读取别名，因此保存的变更在同一会话中生效。工具说明引导 agent 查询实时目录；初始化上下文列出 agent 创建时的别名。显式 profile 别名优先于保存的别名。授权仍按会话记录：打开全新会话以加载新批准的路由；当前会话的权限不会改变。更新插件代码本身时，如果未启用代码热重载，仍需重新加载插件或重启 host；实时读取偏好不会重新加载代码。
+首次使用时，请让 agent 执行 `setup-pstack`。它使用 `claude_agent_models` 发现 provider/model id 及模型支持的档位，询问你希望使用哪些模型，然后调用 `claude_agent_setup`，将包含 `modelAliases` 和 `roles` 的 JSON 字符串作为 `preferences_json` 传入，还可提供 `defaultEffort` 和 `sessionHook`。如果不需要额外模型路由，可保留继承角色。对于新增别名路由，host 通过 `userQuestions` 请求用户直接确认：仅选择 `Authorize routes` 才会将这些路由保存到 `allowedModels`。取消或无法确认时，已保存的偏好保持不变。每次调用 `claude_agent` 和 `claude_agent_models` 都会重新读取别名。确认保存后，当前会话立即持有新路由：其策略修订号加一，且 `claude_agent_setup` 会注入一份取代此前所有角色表的新角色表。一次提问涵盖已保存偏好或本会话尚未包含的全部路由；两者都已包含的路由无需提问。授权只来自该回答。手工编辑 `config.json`（包括经由模型的 shell）不会改变运行中的会话。更早启动的子 agent 和其他已打开的会话保持原有授权，之后启动的子 agent 继承扩大后的集合。注入的角色表是模型上下文，压缩可能将其摘要，恢复会话时会以新表替换；`claude_agent_models` 返回当前的 `roles`、`defaultEffort`、`policyRevision` 和 `sheetDigest`，并以此为准。显式 profile 别名优先于保存的别名。更新插件代码本身时，如果未启用代码热重载，仍需重新加载插件或重启 host；实时读取偏好不会重新加载代码。
 
 生成的文件没有别名或额外授权路由。所有内置角色继承父模型，多成员面板保留各自独立的继承条目，`defaultEffort` 为 `session`，`sessionHook` 为 `true`。模型设置完成前，委派继承父路由，不会虚构别名。偏好无效或配置的根目录缺少指令文件时会失败，而非静默回退。
 
@@ -130,9 +130,9 @@ models:
 
 别名标识路由，不代表权限。显式别名、原始模型或档位选择必须解析到已记录的 `subagent/model-selection-policy` 授权的精确 provider/model 对；没有记录策略时，仅允许当前父级组合。纯继承不需要显式选择。`modelSelection` 控制原始路由覆盖及配置路由优先级，不控制会话权限。
 
-全局 `allowedModels` 包含通过设置流程批准或由运维人员配置的精确路由。Host `subagent-model-selection-settings` 的 `enabled: false` 在查询来源前禁止授权；`enabled: true` 仅使用显式 host 路由，`enabled: null` 则使用注册来源。手工挂载时，在其 `allowedModels` 列表中配置精确 `{ provider, model }` 对。设置工具不能覆盖该 host 策略，也不接受模型提供的 `allowedModels`。设置在全新顶层会话创建时采样，子 agent 继承该策略；更改设置不会扩大现有会话已记录的策略。参见[路由授权升级指南](../../../docs/upgrade-guide/v0.2.1-rc.3/claude-compat-route-authorization/guide.zh.md)。
+全局 `allowedModels` 包含通过设置流程批准或由运维人员配置的精确路由。Host `subagent-model-selection-settings` 的 `enabled: false` 在查询来源前禁止授权；`enabled: true` 仅使用显式 host 路由，`enabled: null` 则使用注册来源。手工挂载时，在其 `allowedModels` 列表中配置精确 `{ provider, model }` 对。设置工具不能覆盖该 host 策略，也不接受模型提供的 `allowedModels`。设置在全新顶层会话创建时采样，子 agent 继承该策略；更改设置不会扩大现有会话已记录的策略。只有经确认的 `claude_agent_setup` 才会扩大运行中的会话，且从不缩小：每次被接受的扩大都会追加一条保留此前全部路由的 `subagent/model-selection-policy` 条目。参见[路由授权升级指南](../../../docs/upgrade-guide/v0.2.1-rc.3/claude-compat-route-authorization/guide.zh.md)。
 
-执行 `setup-pstack` 时，使用 `claude_agent_models` 发现已配置的别名、每个别名的精确路由、会话授权（`allowed`）、支持的 `efforts` 及公布的 `defaultEffort`（如有），以及继承路由。提供已授权的配置别名，以及 `auto` 和 `inherit-parent`；目录可用不代表凭据已验证。保存的别名拼写会保留，包括大写字母。元数据查询失败会在该别名上返回错误及 `allowed: false`，而不会隐藏其他别名。不要根据其他模型的能力推断 `max`、`xhigh` 或其他档位是否受支持。原生 `list_subagent_models` 提供策略授权的原始路由，不提供 compat 别名。原始 provider/model 选择还要求 compat 设置 `modelSelection: true`。
+执行 `setup-pstack` 时，使用 `claude_agent_models` 发现已配置的别名、每个别名的精确路由、会话授权（`allowed`）、支持的 `efforts` 及公布的 `defaultEffort`（如有），以及继承路由和当前的 `roles`、`defaultEffort`、`policyRevision`（已记录策略时）及 `sheetDigest`。提供已授权的配置别名，以及 `auto` 和 `inherit-parent`；目录可用不代表凭据已验证。保存的别名拼写会保留，包括大写字母。元数据查询失败会在该别名上返回错误及 `allowed: false`，而不会隐藏其他别名。不要根据其他模型的能力推断 `max`、`xhigh` 或其他档位是否受支持。原生 `list_subagent_models` 提供策略授权的原始路由，不提供 compat 别名。原始 provider/model 选择还要求 compat 设置 `modelSelection: true`。
 
 ### Readonly 与工作目录
 

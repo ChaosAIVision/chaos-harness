@@ -111,8 +111,9 @@ The tool's description derives from `provider.inheritsParentContext`: a fresh ch
 | [`src/index.ts`](src/index.ts) | Tool registration, provider lifecycle mirroring, activation requests |
 | [`src/preset-selection.ts`](src/preset-selection.ts) | Configured preset validation, model allowlist, and description guidance |
 | [`src/model-selection.ts`](src/model-selection.ts) | Request/config merge and live LLM route preflight |
-| [`src/model-selection-settings.ts`](src/model-selection-settings.ts) | Host-owned opt-in setting sampled for new Sessions |
-| [`src/model-selection-state.ts`](src/model-selection-state.ts) | Session event that records and inherits the sampled decision |
+| [`src/model-selection-settings.ts`](src/model-selection-settings.ts) | Host-owned opt-in setting sampled for new Sessions, and `widenSession` for a human-approved widening of a running Session |
+| [`src/model-selection-state.ts`](src/model-selection-state.ts) | Session event and projection that record, inherit, and widen the decision; later entries are accepted only as a successive superset from `setup` |
+| [`src/human-approval.ts`](src/human-approval.ts) | `HumanApproval`, the proof a person confirmed exact routes; persisted authorization and Session widening accept nothing else |
 | [`src/list-models.ts`](src/list-models.ts) | `list_subagent_models` runtime discovery tool |
 
 </details>

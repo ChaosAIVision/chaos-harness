@@ -3,6 +3,7 @@ import { linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } 
 import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute, join } from 'node:path'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import type { HumanApproval } from '@deepseek-ai/dsh-tool-subagent'
 import type { RouteConfig } from './index.ts'
 
 /** Persisted preferences shared by every profile and working directory. */
@@ -126,21 +127,34 @@ export function loadPstackPreferences(): PstackPreferences {
   catch (error) { throw new Error(`Cannot load ${filename}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }) }
 }
 
-/** Atomically save validated preferences without permitting model-authored authorization changes.
- * @param value - preferences containing aliases and role choices.
- * @param approvedRoutes - host-confirmed routes, supplied only after direct human approval.
- * @returns committed preferences filename.
+/**
+ * Reject a setup update that touches anything but aliases, roles, and the two controls.
+ * Route authorization is not model-editable, so `allowedModels` is refused here, before any question is asked.
+ * @param value - parsed JSON the model supplied.
+ * @returns nothing; narrows `value` to an object on success.
+ * @throws when the update is not an object, carries other keys, or has non-object aliases or roles.
  */
-export function savePstackPreferences(value: unknown, approvedRoutes?: PstackPreferences['allowedModels']): string {
-  const current = loadPstackPreferences()
+export function assertSetupUpdate(value: unknown): asserts value is Record<string, unknown> {
   if (!record(value) || Object.keys(value).some(key => !['modelAliases', 'roles', 'defaultEffort', 'sessionHook'].includes(key))) {
     throw new Error('setup accepts only modelAliases, roles, defaultEffort, sessionHook; route authorization is operator-owned')
   }
   if ((value.modelAliases !== undefined && !record(value.modelAliases)) || (value.roles !== undefined && !record(value.roles))) throw new Error('modelAliases and roles must be objects')
+}
+
+/** Atomically save validated preferences. Routes are added to `allowedModels` only with a person's confirmation.
+ * @param value - preferences containing aliases and role choices.
+ * @param grant - proof that a person confirmed routes in this call; its routes join the saved `allowedModels`.
+ * @returns committed preferences filename.
+ */
+export function savePstackPreferences(value: unknown, grant?: HumanApproval): string {
+  const current = loadPstackPreferences()
+  assertSetupUpdate(value)
+  const added = (grant?.routes ?? []).filter(route => !current.allowedModels.some(
+    saved => saved.provider === route.provider && saved.model === route.model))
   const next = parsePstackPreferences({ ...current, ...value,
     modelAliases: { ...current.modelAliases, ...record(value.modelAliases) ? value.modelAliases : {} },
     roles: { ...current.roles, ...record(value.roles) ? value.roles : {} },
-    ...approvedRoutes === undefined ? {} : { allowedModels: approvedRoutes } })
+    allowedModels: [...current.allowedModels, ...added.map(route => ({ provider: route.provider, model: route.model }))] })
   const filename = pstackConfigPath()
   mkdirSync(dirname(filename), { recursive: true })
   const temporary = `${filename}.${randomUUID()}.tmp`

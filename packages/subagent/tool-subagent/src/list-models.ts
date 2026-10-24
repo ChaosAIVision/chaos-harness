@@ -7,8 +7,9 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
-import type { AllowedModelRoute, ModelSelectionPolicy } from './model-selection.ts'
+import type { ModelSelectionPolicy } from './model-selection.ts'
 import { subagentModelSelectionPolicy } from './model-selection-state.ts'
+import type { SessionRoutePolicy } from './model-selection-state.ts'
 
 interface ListSubagentModelsRequest {
   readonly provider?: string
@@ -39,7 +40,7 @@ function modelLine(provider: string, model: { id: string; name: string; descript
 /** Read the requested provider, allowed models, or exact-model efforts. */
 async function listSubagentModels(
   ctx: Context,
-  policyHandle: ProjectionHandle<AllowedModelRoute[] | null>,
+  policyHandle: ProjectionHandle<SessionRoutePolicy | null>,
   request: ListSubagentModelsRequest,
   exec: ToolRunContext,
 ): Promise<string> {
@@ -104,7 +105,7 @@ async function listSubagentModels(
  */
 export function registerListSubagentModels(
   ctx: Context,
-  policyHandle: ProjectionHandle<AllowedModelRoute[] | null>,
+  policyHandle: ProjectionHandle<SessionRoutePolicy | null>,
 ): void {
   ctx.tools.register(defineTool({
     name: 'list_subagent_models',
