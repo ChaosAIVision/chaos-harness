@@ -159,8 +159,7 @@ export class WorktreeService extends Service {
    * @returns canonical checkout path, branch name, pinned commit, and source repository root.
    */
   async create(agent: Agent, request: CreateWorktreeRequest = {}, signal?: AbortSignal): Promise<CreatedWorktree> {
-    const operationSignal = signal === undefined ? this.lifetime.signal : AbortSignal.any([this.lifetime.signal, signal])
-    operationSignal.throwIfAborted()
+    const operationSignal = this.operation(signal)
     const operation = this.createCheckout(agent, this.resolve(request), operationSignal)
     this.pending.add(operation)
     try {
@@ -199,8 +198,7 @@ export class WorktreeService extends Service {
     onKept: (report: KeptReport) => void,
     signal?: AbortSignal,
   ): Promise<Isolated<T>> {
-    const operationSignal = signal === undefined ? this.lifetime.signal : AbortSignal.any([this.lifetime.signal, signal])
-    operationSignal.throwIfAborted()
+    const operationSignal = this.operation(signal)
     const git = await this.context(agent, operationSignal, request.cwd)
     const source = await this.repository(git)
     if ('reason' in source) {
@@ -258,8 +256,7 @@ export class WorktreeService extends Service {
    * @returns the leases settled by this call; empty outside a Git work tree.
    */
   async reap(agent: Agent, signal?: AbortSignal): Promise<Settlement[]> {
-    const operationSignal = signal === undefined ? this.lifetime.signal : AbortSignal.any([this.lifetime.signal, signal])
-    operationSignal.throwIfAborted()
+    const operationSignal = this.operation(signal)
     const git = await this.context(agent, operationSignal)
     const source = await this.repository(git)
     if ('reason' in source) return []
@@ -273,8 +270,7 @@ export class WorktreeService extends Service {
    * @returns one summary per lease worktree or orphaned lease branch; empty outside a Git work tree.
    */
   async list(agent: Agent, signal?: AbortSignal): Promise<LeaseSummary[]> {
-    const operationSignal = signal === undefined ? this.lifetime.signal : AbortSignal.any([this.lifetime.signal, signal])
-    operationSignal.throwIfAborted()
+    const operationSignal = this.operation(signal)
     const git = await this.context(agent, operationSignal)
     const source = await this.repository(git)
     if ('reason' in source) return []
@@ -284,8 +280,14 @@ export class WorktreeService extends Service {
         path: lease.path, branch: lease.branch, status: lease.status,
         ownerSession: lease.file?.ownerSession, baseCommit: lease.file?.baseCommit,
       })),
-      ...found.orphans.map(branch => ({ path: '', branch, status: 'unowned' as const, ownerSession: undefined, baseCommit: undefined })),
+      ...found.orphans.map(({ branch }) => ({ path: '', branch, status: 'unowned' as const, ownerSession: undefined, baseCommit: undefined })),
     ]
+  }
+
+  private operation(signal?: AbortSignal): AbortSignal {
+    const combined = signal === undefined ? this.lifetime.signal : AbortSignal.any([this.lifetime.signal, signal])
+    combined.throwIfAborted()
+    return combined
   }
 
   private bind(policy: SandboxExecutionPolicy, cwd: string, signal: AbortSignal): GitContext {
@@ -426,7 +428,7 @@ export class WorktreeService extends Service {
 
   private async inspectLeases(git: GitContext, root: string): Promise<{
     leases: Array<{ path: string; branch: string; status: LeaseStatus; file: LeaseFile | undefined; adminDir: string | undefined }>
-    orphans: string[]
+    orphans: Array<{ branch: string; tip: string }>
   }> {
     const listing = await git.git(root, ['worktree', 'list', '--porcelain', '-z'])
     const leases = []
@@ -438,22 +440,27 @@ export class WorktreeService extends Service {
         leases.push({ path: entry.path, branch: entry.branch, status: 'missing' as const, file: undefined, adminDir: undefined })
         continue
       }
-      const { adminDir, file } = await this.readLease(git, entry.path, entry.branch)
+      const { adminDir, file } = await this.readLease(git, entry.path, entry.branch).catch(
+        () => ({ adminDir: undefined, file: undefined }),
+      )
       const alive = file !== undefined && file.state !== 'kept' && file.ownerHost === HOST
         && await ownerAlive(file.ownerPid, file.ownerStart)
       leases.push({ path: entry.path, branch: entry.branch, status: classify(file, HOST, alive), file, adminDir })
     }
-    const refs = await git.git(root, ['for-each-ref', '--format=%(refname)', `refs/heads/${LEASE_PREFIX}`])
+    const refs = await git.git(root, ['for-each-ref', '--format=%(refname) %(objectname)', `refs/heads/${LEASE_PREFIX}`])
     const orphans = refs.stdout.split('\n')
-      .filter(ref => ref.length > 0)
-      .map(ref => ref.replace(/^refs\/heads\//, ''))
-      .filter(branch => !attached.has(branch))
+      .filter(line => line.length > 0)
+      .map((line) => {
+        const [ref = '', tip = ''] = line.split(' ')
+        return { branch: ref.replace(/^refs\/heads\//, ''), tip }
+      })
+      .filter(({ branch }) => !attached.has(branch))
     return { leases, orphans }
   }
 
   private async inspect(git: GitContext, path: string, branch: string, env: NodeJS.ProcessEnv): Promise<Inspection> {
     const status = await git.git(path, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], undefined, env)
-    const head = await git.git(path, ['rev-parse', 'HEAD'])
+    const head = await git.git(path, ['rev-parse', '--verify', '-q', 'HEAD'], [0, 1])
     const symbolic = await git.git(path, ['symbolic-ref', '-q', 'HEAD'], [0, 1])
     const tip = await git.git(path, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`], [0, 1])
     return {
@@ -472,10 +479,6 @@ export class WorktreeService extends Service {
   private async settle(git: GitContext, root: string, lease: LeaseRef): Promise<Settlement> {
     const { path, branch } = lease
     const baseCommit = lease.file.baseCommit
-    if (await this.ctx.fs.lstat(path, undefined, git.signal) === undefined) {
-      await this.deleteBranch(git, root, branch, baseCommit)
-      return { kind: 'removed', branch }
-    }
     const env = await this.filterOverrides(git, path)
     const inspection = await this.inspect(git, path, branch, env)
     const decision = decide(inspection, { branch, baseCommit })
@@ -524,7 +527,7 @@ export class WorktreeService extends Service {
       if (settlement.kind === 'kept') this.deliver(onKept, settlement)
       return settlement
     } catch (error) {
-      this.ctx.logger.warn(`worktree lease ${branch} at ${path} was not settled; a later sweep will retry after this process exits: ${error instanceof Error ? error.message : String(error)}`)
+      this.ctx.logger.warn(`worktree lease ${branch} at ${path} was not settled; a later sweep will retry after this process exits: ${String(error)}`)
       return undefined
     }
   }
@@ -534,7 +537,7 @@ export class WorktreeService extends Service {
     try {
       onKept(report)
     } catch (error) {
-      this.ctx.logger.warn(`worktree kept report for ${report.path} was not delivered: ${error instanceof Error ? error.message : String(error)}`)
+      this.ctx.logger.warn(`worktree kept report for ${report.path} was not delivered: ${String(error)}`)
     }
   }
 
@@ -547,7 +550,7 @@ export class WorktreeService extends Service {
       if (file.state === 'provisioning') await this.completeCheckout(own, { path, branch, adminDir, file })
       await this.settle(own, root, { path, branch, adminDir, file })
     } catch (error) {
-      this.ctx.logger.warn(`worktree lease ${branch} at ${path} could not be rolled back: ${error instanceof Error ? error.message : String(error)}`)
+      this.ctx.logger.warn(`worktree lease ${branch} at ${path} could not be rolled back: ${String(error)}`)
     }
   }
 
@@ -566,26 +569,28 @@ export class WorktreeService extends Service {
         const action = reapAction(lease.status, lease.file?.state)
         if (action === 'skip' || lease.file === undefined || lease.adminDir === undefined) continue
         const ref = { path: lease.path, branch: lease.branch, adminDir: lease.adminDir, file: lease.file }
-        if (action === 'replay-provisioning') await this.completeCheckout(bound, ref)
-        settled.push({ settlement: await this.settle(bound, root, ref), ownerSession: lease.file.ownerSession })
+        try {
+          if (action === 'replay-provisioning') await this.completeCheckout(bound, ref)
+          settled.push({ settlement: await this.settle(bound, root, ref), ownerSession: lease.file.ownerSession })
+        } catch (error) {
+          this.ctx.logger.warn(`worktree lease ${lease.branch} at ${lease.path} was not settled by the sweep: ${String(error)}`)
+        }
       }
-      for (const branch of found.orphans) {
-        if (await this.sweepOrphan(bound, root, branch)) settled.push({ settlement: { kind: 'removed', branch }, ownerSession: undefined })
+      for (const { branch, tip } of found.orphans) {
+        if (await this.sweepOrphan(bound, root, branch, tip)) settled.push({ settlement: { kind: 'removed', branch }, ownerSession: undefined })
       }
       return settled
     })
   }
 
   /** Delete a lease branch without a worktree only if its reflog proves it never left its creation commit. */
-  private async sweepOrphan(git: GitContext, root: string, branch: string): Promise<boolean> {
-    const tip = await git.git(root, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`], [0, 1])
-    if (tip.exitCode !== 0) return false
+  private async sweepOrphan(git: GitContext, root: string, branch: string, tip: string): Promise<boolean> {
     const log = await git.git(root, ['reflog', 'show', '--format=%H %gs', `refs/heads/${branch}`], [0, 128])
     const oldest = log.stdout.split('\n').filter(line => line.length > 0).at(-1)
     const [commit, ...subject] = oldest?.split(' ') ?? []
     const created = subject.join(' ').startsWith('branch: Created from') ? commit : undefined
-    if (decideOrphan(tip.stdout.trim(), created) === 'keep') return false
-    await this.deleteBranch(git, root, branch, tip.stdout.trim())
+    if (decideOrphan(tip, created) === 'keep') return false
+    await this.deleteBranch(git, root, branch, tip)
     return true
   }
 
@@ -595,7 +600,7 @@ export class WorktreeService extends Service {
         if (settlement.kind === 'kept' && ownerSession === session) this.deliver(onKept, settlement)
       }
     } catch (error) {
-      this.ctx.logger.warn(`worktree sweep failed; provisioning continues: ${error instanceof Error ? error.message : String(error)}`)
+      this.ctx.logger.warn(`worktree sweep failed; provisioning continues: ${String(error)}`)
     }
   }
 }

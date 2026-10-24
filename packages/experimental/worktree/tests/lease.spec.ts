@@ -309,6 +309,90 @@ describe('hooks and filter drivers during leases', () => {
   })
 })
 
+describe('failures while provisioning and sweeping', () => {
+  const spawnFailing = (context: Context, matches: (argv: readonly string[]) => boolean, times = Infinity) => {
+    const spawn = context.subprocess.spawn.bind(context.subprocess)
+    let remaining = times
+    vi.spyOn(context.subprocess, 'spawn').mockImplementation((spec) => {
+      if (remaining > 0 && matches(spec.argv)) {
+        remaining--
+        throw new Error('injected spawn failure')
+      }
+      return spawn(spec)
+    })
+  }
+  const idle = async () => ({ result: Promise.resolve(), dispose: async () => {} })
+
+  it('finishes and removes a half-built lease when checkout fails after the worktree was registered', async () => {
+    const root = await repo()
+    const { ctx, agent } = await start(root)
+    spawnFailing(ctx, argv => argv.includes('reset') && argv.includes('--hard') && !argv.includes('lease-retry'), 1)
+    await expect(ctx.worktrees.isolate(agent, {}, idle, () => {})).rejects.toThrow('injected spawn failure')
+    expect(await branches(root)).toBe('')
+    expect(await worktreeCount(root)).toBe(1)
+  })
+
+  it('leaves a half-built lease for the reaper when rolling it back also fails', async () => {
+    const root = await repo()
+    const { ctx, agent } = await start(root)
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    spawnFailing(ctx, argv => argv.includes('reset') && argv.includes('--hard'))
+    await expect(ctx.worktrees.isolate(agent, {}, idle, () => {})).rejects.toThrow('injected spawn failure')
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not be rolled back'))
+    expect(await ctx.worktrees.list(agent)).toEqual([expect.objectContaining({ status: 'live' })])
+  })
+
+  it('ignores a half-built lease that never received metadata', async () => {
+    const root = await repo()
+    const { ctx, agent } = await start(root)
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    spawnFailing(ctx, argv => argv.some(arg => arg.includes('dsh-lease.json')))
+    await expect(ctx.worktrees.isolate(agent, {}, idle, () => {})).rejects.toThrow('injected spawn failure')
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('rolled back'))
+    expect(await ctx.worktrees.list(agent)).toEqual([expect.objectContaining({ status: 'unowned' })])
+  })
+
+  it('still provisions when the opening sweep fails', async () => {
+    const root = await repo()
+    const { ctx, agent } = await start(root)
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    spawnFailing(ctx, argv => argv.includes('list'), 1)
+    const { settled } = await ctx.worktrees.isolate(agent, {}, idle, () => {})
+    expect(await settled).toMatchObject({ kind: 'removed' })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('sweep failed'))
+  })
+
+  it('reports Git failures other than "not a repository" instead of degrading', async () => {
+    const root = await repo()
+    await writeFile(join(root, '.git/config'), '[broken\n')
+    const { ctx, agent } = await start(root)
+    await expect(ctx.worktrees.isolate(agent, {}, idle, () => {})).rejects.toThrow(/worktree command failed \(128\)/)
+  })
+
+  it('keeps a checkout whose branch ref the delegate deleted', async () => {
+    const root = await repo()
+    const { ctx, agent } = await start(root)
+    const { settlement } = await delegate(ctx, agent, async (cwd) => {
+      await git(cwd, 'update-ref', '-d', `refs/heads/${await git(cwd, 'symbolic-ref', '--short', 'HEAD')}`)
+    })
+    expect(settlement).toMatchObject({ kind: 'kept', reason: 'changed' })
+  })
+
+  it('honours a caller signal and refuses once it aborted', async () => {
+    const root = await repo()
+    const { ctx, agent } = await start(root)
+    const live = new AbortController()
+    const isolated = await ctx.worktrees.isolate(agent, {}, idle, () => {}, live.signal)
+    expect(await isolated.settled).toMatchObject({ kind: 'removed' })
+    expect(await ctx.worktrees.list(agent, live.signal)).toEqual([])
+    expect(await ctx.worktrees.reap(agent, live.signal)).toEqual([])
+    live.abort(new Error('cancelled'))
+    await expect(ctx.worktrees.isolate(agent, {}, idle, () => {}, live.signal)).rejects.toThrow('cancelled')
+    await expect(ctx.worktrees.list(agent, live.signal)).rejects.toThrow('cancelled')
+    await expect(ctx.worktrees.reap(agent, live.signal)).rejects.toThrow('cancelled')
+  })
+})
+
 describe('settlement races and refusals', () => {
   it('keeps the checkout when Git refuses to remove a locked worktree', async () => {
     const root = await repo()

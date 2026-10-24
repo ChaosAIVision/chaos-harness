@@ -9,15 +9,23 @@ const execute = promisify(execFile)
 /** This machine's host name; leases recorded under another name are never reaped here. */
 export const HOST = hostname()
 
+type PsRunner = (pid: number) => Promise<string>
+
+async function runPs(pid: number): Promise<string> {
+  const { stdout } = await execute('ps', ['-o', 'lstart=', '-p', String(pid)], { env: { ...process.env, LC_ALL: 'C' } })
+  return stdout
+}
+
 /**
  * Read a process start time from the operating system.
  * @param pid - process id to inspect.
+ * @param ps - prints the raw `ps` start timestamp for a pid; replaceable for tests.
  * @returns the `ps` start timestamp, or null when the process or `ps` is unavailable.
  */
-export async function processStart(pid: number): Promise<string | null> {
+export async function processStart(pid: number, ps: PsRunner = runPs): Promise<string | null> {
   if (process.platform === 'win32') return null
   try {
-    const { stdout } = await execute('ps', ['-o', 'lstart=', '-p', String(pid)], { env: { ...process.env, LC_ALL: 'C' } })
+    const stdout = await ps(pid)
     const text = stdout.trim()
     return text.length === 0 ? null : text
   } catch (_exited: unknown) {

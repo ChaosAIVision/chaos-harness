@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Isolation, KeptReport } from '../src/index.ts'
 import { git, harness, repository, testAgent } from './harness.ts'
@@ -12,6 +12,7 @@ const roots: string[] = []
 const children: Array<{ kill: (signal: NodeJS.Signals) => boolean }> = []
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const child of children.splice(0)) child.kill('SIGKILL')
   await ctx?.fiber.dispose()
   ctx = undefined
@@ -249,6 +250,28 @@ describe('replaying interrupted transitions', () => {
     const { ctx, agent } = await start(root)
     expect(await ctx.worktrees.reap(agent)).toEqual([])
     expect(await git(root, 'branch', '--list', 'dsh/lease/*')).toContain('dsh/lease/handmade')
+  })
+
+  it('settles the remaining dead leases when one cannot be inspected, and never touches the broken one', async () => {
+    const root = await repo()
+    const broken = await manualLease(root, 'dsh/lease/broken', 'held', true)
+    await manualLease(root, 'dsh/lease/fine', 'held', true)
+    const adminDir = await git(broken, 'rev-parse', '--absolute-git-dir')
+    await writeFile(join(adminDir, 'index'), 'not an index')
+    const { ctx, agent } = await start(root)
+    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
+    expect(await ctx.worktrees.reap(agent)).toEqual([{ kind: 'removed', branch: 'dsh/lease/fine' }])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('dsh/lease/broken'))
+    expect(await git(root, 'branch', '--list', 'dsh/lease/*')).toContain('dsh/lease/broken')
+  })
+
+  it('treats a lease whose worktree link is unreadable as unowned', async () => {
+    const root = await repo()
+    const unreadable = await manualLease(root, 'dsh/lease/unlinked', 'held', true)
+    await writeFile(join(unreadable, '.git'), 'gitdir: /nonexistent\n')
+    const { ctx, agent } = await start(root)
+    expect(await ctx.worktrees.list(agent)).toEqual([expect.objectContaining({ branch: 'dsh/lease/unlinked', status: 'unowned' })])
+    expect(await ctx.worktrees.reap(agent)).toEqual([])
   })
 
   it('converges without error when two services sweep the same repository together', async () => {
