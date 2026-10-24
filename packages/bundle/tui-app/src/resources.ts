@@ -2,8 +2,9 @@
 import { open, readFile, unlink } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 import { z } from 'zod'
+import type { SessionFace } from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-client-file-upload/client'
-import type { TerminalFeatureHost } from './types.ts'
+import type { TerminalChoice, TerminalFeatureHost } from './types.ts'
 import { accepted, details, selected } from './features/common.ts'
 import { featureText as t } from './features/locales.ts'
 
@@ -160,7 +161,12 @@ export async function files(host: TerminalFeatureHost): Promise<void> {
   }
 }
 
-/** Upload a local file and submit the returned receipt through ordinary Session admission.
+const imageTypes = new Map<string, Extract<Parameters<SessionFace['prompt']>[0][number], { type: 'image' }>['mediaType']>([
+  ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.webp', 'image/webp'], ['.gif', 'image/gif'],
+])
+
+/** Submit supported local images through Session image admission, or upload other files as receipts.
+ * Image previews remain owned by the pending submission until retirement.
  * @param host - Current terminal services.
  */
 export async function upload(host: TerminalFeatureHost): Promise<void> {
@@ -169,7 +175,21 @@ export async function upload(host: TerminalFeatureHost): Promise<void> {
   if (path === undefined) return
   const text = await host.view.input(t.uploadPrompt)
   if (text === undefined) return
-  const result = accepted(await host.client.fileUpload.upload(session.sessionId, await readFile(path), basename(path), host.signal))
+  const bytes = await readFile(path)
+  const name = basename(path)
+  const mediaType = imageTypes.get(extname(path).toLowerCase())
+  if (mediaType !== undefined) {
+    const previewUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: mediaType }))
+    const submission = session.beginSubmission({
+      text, mode: 'queue', attachments: [{ type: 'image', value: { previewUrl, name } }],
+      onRetire: () => URL.revokeObjectURL(previewUrl),
+    })
+    try {
+      accepted(await session.prompt([{ type: 'text', text }, { type: 'image', mediaType, data: bytes.toString('base64'), name }], 'queue', host.signal, submission.requestId))
+    } catch (error) { submission.abandon(); throw error }
+    return
+  }
+  const result = accepted(await host.client.fileUpload.upload(session.sessionId, bytes, name, host.signal))
   const submission = session.beginSubmission({ text, mode: 'queue', attachments: [{ type: 'file', value: result.file }] })
   try {
     accepted(await session.prompt([{ type: 'text', text }, { type: 'file', receiptId: result.receiptId }], 'queue', host.signal, submission.requestId))
@@ -207,7 +227,9 @@ export async function exportSession(host: TerminalFeatureHost): Promise<void> {
 }
 
 const changeFile = z.object({ path: z.string(), display: z.string(), added: z.number().int(), deleted: z.number().int() })
-const summarySchema = z.object({ turn: z.number().int(), files: z.array(changeFile), total: z.number().int(), added: z.number().int(), deleted: z.number().int() })
+const summarySchema = z.object({
+  turn: z.number().int(), files: z.array(changeFile), total: z.number().int(), added: z.number().int(), deleted: z.number().int(),
+})
 const diffSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('text'), display: z.string(), hunks: z.array(z.object({ oldStart: z.number().int(), oldLines: z.number().int(), newStart: z.number().int(), newLines: z.number().int(), lines: z.array(z.string()) })) }),
   z.object({ kind: z.enum(['binary', 'oversized']), display: z.string() }),
@@ -238,13 +260,26 @@ export async function diff(host: TerminalFeatureHost): Promise<void> {
 
 const presentedSchema = z.object({ files: z.array(z.object({ path: z.string(), description: z.string().optional() })) })
 
-/** Browse explicit delivered files from the current retained history window.
+/** Browse declared deliverables and Host-recorded changed files in the retained history window.
+ * Load older history before reopening this menu to include earlier turns.
  * @param host - Current terminal services.
  */
 export async function deliverables(host: TerminalFeatureHost): Promise<void> {
   const sessionId = selected(host).sessionId
   const entries = host.client.sessions.binding(sessionId)?.eventSource.getSnapshot().entries ?? []
-  const files = entries.filter(entry => String(entry.event.type) === 'deliverables/presented').flatMap(entry => presentedSchema.parse(entry.event.data).files)
-  const file = await host.view.choose(t.deliverables, files.map(file => ({ label: file.path, ...file.description === undefined ? {} : { description: file.description }, value: file })))
-  if (file !== undefined) await document(host, file.path)
+  const files: TerminalChoice<string>[] = []
+  for (const { event } of entries) {
+    if (String(event.type) === 'deliverables/presented') {
+      files.push(...presentedSchema.parse(event.data).files.map(file => ({ label: `${t.declaredFile}: ${file.path}`, ...file.description === undefined ? {} : { description: file.description }, value: file.path })))
+    }
+    if (String(event.type) === 'workspace/changes') {
+      const query = new URLSearchParams({ sessionId, seq: String(event.seq) })
+      const response = await host.request(`api/changes.summary?${query}`, { signal: host.signal })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const summary = summarySchema.parse(await response.json())
+      files.push(...summary.files.map(file => ({ label: `${t.changedFile}: ${file.display}`, description: `+${file.added} -${file.deleted}`, value: file.path })))
+    }
+  }
+  const file = await host.view.choose(t.deliverables, files)
+  if (file !== undefined) await document(host, file)
 }

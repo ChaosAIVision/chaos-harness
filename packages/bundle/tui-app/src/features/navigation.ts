@@ -30,7 +30,9 @@ export async function sessions(host: TerminalFeatureHost): Promise<void> {
     const query = await host.view.input(t.searchText)
     if (query === undefined) return
     const result = accepted(await host.client.sessions.search(query, host.signal))
-    const target = await host.view.choose(t.sessions, result.items.map(item => ({ label: item.snippet, description: item.sessionId, value: item.sessionId })))
+    const target = await host.view.choose(t.sessions, result.items.map(item => ({
+      label: item.snippet, description: item.sessionId, value: item.sessionId,
+    })))
     if (target !== undefined) await host.select(target)
     return
   }
@@ -53,7 +55,7 @@ export async function sessions(host: TerminalFeatureHost): Promise<void> {
   if (action === 'unpin') await receipt(host, await host.client.remote.workspace.unpinSession({ sessionId }))
 }
 
-/** Register, rename, remove and open workspace directories.
+/** Register, rename, remove, reorder and open workspaces and their sessions.
  * @param host - Current terminal services.
  */
 export async function workspaces(host: TerminalFeatureHost): Promise<void> {
@@ -75,6 +77,7 @@ export async function workspaces(host: TerminalFeatureHost): Promise<void> {
       const action = await host.view.choose(workspace.title, [
         { label: t.newSession, value: 'new' }, { label: t.sessions, value: 'sessions' },
         { label: t.workspaceRename, value: 'rename' }, { label: t.workspaceRemove, value: 'delete' },
+        { label: t.reorderWorkspace, value: 'reorder' }, { label: t.reorderSessions, value: 'reorderSessions' },
       ])
       if (action === 'new') await host.select(await host.client.sessions.create({ workspaceId: workspace.workspaceId }))
       if (action === 'sessions') {
@@ -85,7 +88,29 @@ export async function workspaces(host: TerminalFeatureHost): Promise<void> {
       }
       if (action === 'rename') {
         const title = await host.view.input(t.title, { initial: workspace.title })
-        if (title !== undefined) await receipt(host, await host.client.remote.workspace.rename({ workspaceId: workspace.workspaceId, title }))
+        if (title !== undefined) {
+          await receipt(host, await host.client.remote.workspace.rename({ workspaceId: workspace.workspaceId, title }))
+        }
+      }
+      if (action === 'reorder') {
+        const anchor = await host.view.choose<{ kind: 'end' } | { kind: 'before'; id: typeof workspace.workspaceId }>(t.moveBefore, [
+          ...frame.value.items.filter(candidate => candidate.workspaceId !== workspace.workspaceId).map(candidate => ({ label: candidate.title, value: { kind: 'before' as const, id: candidate.workspaceId } })),
+          { label: t.moveToEnd, value: { kind: 'end' as const } },
+        ])
+        if (anchor !== undefined) await receipt(host, await host.client.remote.workspace.insertBefore({ workspaceId: workspace.workspaceId, ...anchor.kind === 'before' ? { beforeWorkspaceId: anchor.id } : {} }))
+      }
+      if (action === 'reorderSessions') {
+        await host.client.sessions.refresh()
+        const rows = host.client.sessions.list.getSnapshot().byId
+        const sessionId = await host.view.choose(t.sessions, workspace.sessionIds.map(id => ({
+          label: rows[id]?.displayTitle ?? id, value: id,
+        })))
+        if (sessionId === undefined) return
+        const anchor = await host.view.choose<{ kind: 'end' } | { kind: 'before'; id: typeof sessionId }>(t.moveBefore, [
+          ...workspace.sessionIds.filter(id => id !== sessionId).map(id => ({ label: rows[id]?.displayTitle ?? id, value: { kind: 'before' as const, id } })),
+          { label: t.moveToEnd, value: { kind: 'end' as const } },
+        ])
+        if (anchor !== undefined) await receipt(host, await host.client.remote.workspace.insertSessionBefore({ workspaceId: workspace.workspaceId, sessionId, ...anchor.kind === 'before' ? { beforeSessionId: anchor.id } : {} }))
       }
       if (action === 'delete' && await confirm(host, `${t.workspaceRemove}: ${workspace.title}`)) {
         await receipt(host, await host.client.remote.workspace.delete({ workspaceId: workspace.workspaceId }))
@@ -103,7 +128,9 @@ export async function subagents(host: TerminalFeatureHost, parent = selected(hos
   const projection = accepted(await host.client.remote.session.projections({ sessionId: parent }, host.signal))
   const children = projection?.values.subagentCatalog
   if (children === undefined) throw new Error(t.unavailable)
-  const child = await host.view.choose(t.subagents, children.map(child => ({ label: child.label ?? child.id, description: child.mode, value: child })))
+  const child = await host.view.choose(t.subagents, children.map(child => ({
+    label: child.label ?? child.id, description: child.mode, value: child,
+  })))
   if (child === undefined) return
   const action = await host.view.choose(child.label ?? child.id, [
     { label: t.open, value: 'open' }, { label: t.subagents, value: 'children' },
@@ -118,7 +145,7 @@ export async function subagents(host: TerminalFeatureHost, parent = selected(hos
   if ((action === 'followup' || action === 'steer') && child.mode === 'continuable') {
     const text = await host.view.input(t.prompt)
     if (text === undefined) return
-    await host.client.sessions.using(address, { source: 'controllerOperation', signal: host.signal }, async reference => {
+    await host.client.sessions.using(address, { source: 'controllerOperation', signal: host.signal }, async (reference) => {
       const { session } = await reference.ready
       const mode = action === 'steer' ? 'steer' : 'queue'
       const submission = session.beginSubmission({ text, mode, attachments: [] })
@@ -139,7 +166,9 @@ export async function queue(host: TerminalFeatureHost): Promise<void> {
   const inbox = projection?.values.inbox
   if (inbox === undefined) throw new Error(t.unavailable)
   const messages = [...inbox['next-turn'], ...inbox['next-step']].map(item => pendingMessage.parse(item))
-  const message = await host.view.choose(t.queue, messages.map(message => ({ label: details(message.content), description: message.id, value: message })))
+  const message = await host.view.choose(t.queue, messages.map(message => ({
+    label: details(message.content), description: message.id, value: message,
+  })))
   if (message === undefined) return
   const action = await host.view.choose(t.queue, [{ label: t.editQueue, value: 'edit' }, { label: t.remove, value: 'remove' }, { label: t.steer, value: 'steer' }])
   if (action === 'remove' || action === 'steer') await receipt(host, await session.updateQueue(message.id, { kind: action }))

@@ -27,6 +27,8 @@ export const featureText = {
   archive: 'Archive session', restore: 'Restore session', pin: 'Pin session', unpin: 'Unpin session', fork: 'Fork session',
   search: 'Search sessions', searchText: 'Search phrase', newSession: 'New session', cwd: 'Working directory', preset: 'Agent preset (empty uses default)',
   workspaceRename: 'Rename workspace', workspaceRemove: 'Remove workspace registration', workspaceCreate: 'Register a directory',
+  reorderWorkspace: 'Reorder workspace', reorderSessions: 'Reorder sessions', moveBefore: 'Move before', moveToEnd: 'Move to end',
+  declaredFile: 'Declared deliverable', changedFile: 'Recorded changed file',
   followup: 'Send follow-up', steer: 'Steer now', editQueue: 'Edit pending text',
   stopped: 'Stop requested.', next: 'Next page', previous: 'Previous page', parent: 'Parent directory', enterPath: 'Enter file path',
   loadOlder: 'Load older history', exportPath: 'Export destination (new file)', saved: 'Saved',

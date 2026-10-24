@@ -1,14 +1,15 @@
 /** User-visible feature behavior against typed Remote operation scripts and real document decoders. */
 import { Context } from '@deepseek-ai/cordis'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
+import { brandString } from '@deepseek-ai/dsh-brand'
 import type { SessionFace } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { handleTerminalFeature, terminalFeatureCommands } from '../src/features.ts'
-import { diff, document, exportSession, htmlText, saveBytes } from '../src/resources.ts'
+import { deliverables, diff, document, exportSession, htmlText, saveBytes, upload } from '../src/resources.ts'
 import type { TerminalChoice, TerminalFeatureHost, TerminalPresentation } from '../src/types.ts'
 import { featureText as t } from '../src/features/locales.ts'
 
@@ -47,7 +48,10 @@ function harness(remote: object, labels: string[] = [], values: string[] = []) {
 }
 
 const directories: string[] = []
-afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
+afterEach(async () => {
+  vi.restoreAllMocks()
+  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
+})
 async function directory(): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), 'dsh-tui-features-'))
   directories.push(path)
@@ -152,6 +156,115 @@ describe('Terminal feature operations', () => {
       'api/changes.diff?sessionId=terminal-feature-session&seq=42&index=0',
     ])
     expect(h.shown[0]?.text).toBe('@@ -1,1 +1,1 @@\n-old\n+new')
+  })
+
+  it.each(['observed', 'failed'] as const)('sends image bytes and keeps the preview until %s retirement', async (reason) => {
+    const path = join(await directory(), 'photo.PNG')
+    const bytes = Buffer.from([137, 80, 78, 71])
+    await writeFile(path, bytes)
+    const h = harness({}, [], [path, 'Inspect the image'])
+    const revoke = vi.spyOn(URL, 'revokeObjectURL')
+    const beginSubmission = vi.fn<SessionFace['beginSubmission']>(() => ({
+      requestId: brandString<ReturnType<SessionFace['beginSubmission']>['requestId']>('image-request'), abandon: vi.fn(),
+    }))
+    const prompt = vi.fn<SessionFace['prompt']>(async () => ready({ accepted: true }))
+    h.host.current = () => ({ ...session, beginSubmission, prompt })
+    await upload(h.host)
+    expect(prompt).toHaveBeenCalledWith([
+      { type: 'text', text: 'Inspect the image' },
+      { type: 'image', mediaType: 'image/png', data: bytes.toString('base64'), name: 'photo.PNG' },
+    ], 'queue', h.host.signal, 'image-request')
+    const pending = beginSubmission.mock.calls[0]?.[0]
+    expect(pending?.attachments[0]).toMatchObject({ type: 'image', value: { name: 'photo.PNG', previewUrl: expect.stringMatching(/^blob:/) } })
+    const attachment = pending?.attachments[0]
+    if (attachment?.type !== 'image') throw new Error('Missing image preview')
+    const previewBytes = await (await fetch(attachment.value.previewUrl)).arrayBuffer()
+    expect(new Uint8Array(previewBytes)).toEqual(new Uint8Array(bytes))
+    expect(revoke).not.toHaveBeenCalled()
+    pending?.onRetire?.(reason === 'observed' ? { reason, attachments: [] } : { reason })
+    expect(revoke).toHaveBeenCalledWith(attachment.value.previewUrl)
+  })
+
+  it('abandons and retires the image preview when prompt admission fails', async () => {
+    const path = join(await directory(), 'photo.webp')
+    await writeFile(path, new Uint8Array([1, 2]))
+    const h = harness({}, [], [path, ''])
+    const revoke = vi.spyOn(URL, 'revokeObjectURL')
+    const abandon = vi.fn()
+    const beginSubmission = vi.fn<SessionFace['beginSubmission']>((input) => {
+      abandon.mockImplementation(() => input.onRetire?.({ reason: 'failed' }))
+      return { requestId: brandString<ReturnType<SessionFace['beginSubmission']>['requestId']>('failed-image'), abandon }
+    })
+    h.host.current = () => ({ ...session, beginSubmission, prompt: async () => { throw new Error('Admission failed') } })
+    await expect(upload(h.host)).rejects.toThrow('Admission failed')
+    expect(abandon).toHaveBeenCalledOnce()
+    expect(revoke).toHaveBeenCalledOnce()
+  })
+
+  it('keeps unsupported image formats on the ordinary file receipt path', async () => {
+    const path = join(await directory(), 'drawing.svg')
+    const bytes = Buffer.from('<svg/>')
+    await writeFile(path, bytes)
+    const h = harness({}, [], [path, 'Read the file'])
+    const file = { attachmentId: 'stored-file', name: 'drawing.svg', bytes: bytes.length }
+    const uploadFile = vi.fn(async () => ready({ file, receiptId: 'file-receipt' }))
+    Object.assign(h.host.client, { fileUpload: { upload: uploadFile } })
+    const beginSubmission = vi.fn<SessionFace['beginSubmission']>(() => ({
+      requestId: brandString<ReturnType<SessionFace['beginSubmission']>['requestId']>('file-request'), abandon: vi.fn(),
+    }))
+    const prompt = vi.fn<SessionFace['prompt']>(async () => ready({ accepted: true }))
+    h.host.current = () => ({ ...session, beginSubmission, prompt })
+    await upload(h.host)
+    expect(uploadFile).toHaveBeenCalledWith(id, bytes, 'drawing.svg', h.host.signal)
+    expect(beginSubmission).toHaveBeenCalledWith({ text: 'Read the file', mode: 'queue', attachments: [{ type: 'file', value: file }] })
+    expect(prompt).toHaveBeenCalledWith([
+      { type: 'text', text: 'Read the file' }, { type: 'file', receiptId: 'file-receipt' },
+    ], 'queue', h.host.signal, 'file-request')
+  })
+
+  it.each([['Second', { beforeWorkspaceId: 'second' }], [t.moveToEnd, {}], [undefined, undefined]])('reorders a workspace or cancels the %s anchor', async (anchor, expected) => {
+    const insertBefore = vi.fn(async () => ready({ workspaceIds: ['first', 'second'] }))
+    const dispose = vi.fn()
+    const h = harness({ workspace: { follow: () => ({ async *[Symbol.asyncIterator]() {
+      yield { type: 'baseline', value: { items: [{ workspaceId: 'first', title: 'First', path: '/first', sessionIds: [] }, { workspaceId: 'second', title: 'Second', path: '/second', sessionIds: [] }] } }
+    }, dispose }), insertBefore } }, ['First', t.reorderWorkspace, ...anchor === undefined ? [] : [String(anchor)]])
+    await handleTerminalFeature('/workspaces', h.host)
+    if (expected === undefined) expect(insertBefore).not.toHaveBeenCalled()
+    else expect(insertBefore).toHaveBeenCalledWith({ workspaceId: 'first', ...expected })
+    expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it.each([['Two', { beforeSessionId: 'two' }], [t.moveToEnd, {}], [undefined, undefined]])('reorders a session or cancels the %s anchor without mutation', async (anchor, expected) => {
+    const insertSessionBefore = vi.fn(async () => ready({}))
+    const dispose = vi.fn()
+    const h = harness({ workspace: { follow: () => ({ async *[Symbol.asyncIterator]() {
+      yield { type: 'baseline', value: { items: [{ workspaceId: 'workspace', title: 'Workspace', path: '/work', sessionIds: [id, SessionId('two')] }] } }
+    }, dispose }), insertSessionBefore } }, ['Workspace', t.reorderSessions, 'One', ...anchor === undefined ? [] : [String(anchor)]])
+    Object.assign(h.host.client, { sessions: { refresh: async () => undefined, list: { getSnapshot: () => ({ byId: { [id]: { displayTitle: 'One' }, two: { displayTitle: 'Two' } } }) } } })
+    await handleTerminalFeature('/workspaces', h.host)
+    if (expected === undefined) expect(insertSessionBefore).not.toHaveBeenCalled()
+    else expect(insertSessionBefore).toHaveBeenCalledWith({ workspaceId: 'workspace', sessionId: id, ...expected })
+    expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('opens Host-recorded changed files with separate declared deliverable labels', async () => {
+    const read = vi.fn(async () => ready({ text: 'changed text', lines: 1, eof: true }))
+    const h = harness({ workspaceFiles: { read } }, [`${t.changedFile}: app.ts`])
+    Object.assign(h.host.client, { sessions: { binding: () => ({ eventSource: { getSnapshot: () => ({ entries: [
+      { event: { seq: 11, type: 'deliverables/presented', data: { files: [{ path: 'report.md', description: 'Report' }] } } },
+      { event: { seq: 12, type: 'workspace/changes', data: { turn: 1 } } },
+    ] }) } }) } })
+    const choose = vi.spyOn(h.host.view, 'choose')
+    const request = vi.fn<TerminalFeatureHost['request']>(async () => new Response(JSON.stringify({ turn: 1, files: [{ path: 'src/app.ts', display: 'app.ts', added: 2, deleted: 1 }], total: 1, added: 2, deleted: 1 })))
+    h.host.request = request
+    await deliverables(h.host)
+    expect(request).toHaveBeenCalledWith('api/changes.summary?sessionId=terminal-feature-session&seq=12', { signal: h.host.signal })
+    expect(choose.mock.calls[0]?.[1]).toEqual([
+      { label: `${t.declaredFile}: report.md`, description: 'Report', value: 'report.md' },
+      { label: `${t.changedFile}: app.ts`, description: '+2 -1', value: 'src/app.ts' },
+    ])
+    expect(read).toHaveBeenCalledWith(id, 'src/app.ts', { offset: 1 }, h.host.signal)
+    expect(h.shown).toEqual([{ title: 'src/app.ts:1', text: 'changed text' }])
   })
 
   it('releases the exclusive PTY view without closing its persistent shell', async () => {
