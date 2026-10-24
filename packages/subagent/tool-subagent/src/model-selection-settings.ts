@@ -10,6 +10,8 @@ import type { ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
 import { approvalCovers, assertHumanApproval } from './human-approval.ts'
 import type { HumanApproval } from './human-approval.ts'
 import {
+  mergeRoutes,
+  missingRoutes,
   sessionPolicy,
   subagentModelSelectionProjectionDefinition,
 } from './model-selection-state.ts'
@@ -40,14 +42,17 @@ export interface SubagentModelSelectionSettings {
 export type AllowedModelsSource = () => readonly AllowedModelRoute[] | undefined
   | Promise<readonly AllowedModelRoute[] | undefined>
 
-/** How a {@link SubagentModelSelectionConfig.widenSession} request ended. */
-export type WidenSessionOutcome =
-  | { readonly kind: 'unchanged'; readonly revision: number | undefined }
-  | { readonly kind: 'widened'; readonly revision: number }
+/**
+ * How a {@link SubagentModelSelectionConfig.widenSession} request ended.
+ * `Saved` is what `persist` returned; a declined request never persisted.
+ */
+export type WidenSessionOutcome<Saved = void> =
+  | { readonly kind: 'unchanged'; readonly revision: number | undefined; readonly saved: Saved }
+  | { readonly kind: 'widened'; readonly revision: number; readonly saved: Saved }
   | { readonly kind: 'declined' }
 
 /** Host-owned steps of one widening, run in this order and never reordered by the service. */
-export interface WidenSessionSteps {
+export interface WidenSessionSteps<Saved = void> {
   /** Routes the caller still has to persist for future Sessions; they are confirmed together with the Session's missing routes. */
   readonly unsaved: readonly AllowedModelRoute[]
   /**
@@ -59,9 +64,9 @@ export interface WidenSessionSteps {
   /**
    * Durably save the caller's preferences, with the proof when routes were confirmed.
    * @param approval - proof for the confirmed routes; undefined when nothing needed confirming.
-   * @returns when the save is committed; a rejection appends nothing.
+   * @returns the committed result once saved; a rejection appends nothing.
    */
-  readonly persist: (approval: HumanApproval | undefined) => Promise<void>
+  readonly persist: (approval: HumanApproval | undefined) => Promise<Saved>
 }
 
 /** Optional deployment base for the preference. */
@@ -142,12 +147,12 @@ export class SubagentModelSelectionConfig extends Service {
    *   has no parent route, when
    *   the proof does not cover the missing routes, or when `persist` or the signal rejects.
    */
-  async widenSession(
+  async widenSession<Saved>(
     agent: Agent,
     routes: readonly AllowedModelRoute[],
-    steps: WidenSessionSteps,
+    steps: WidenSessionSteps<Saved>,
     signal: AbortSignal,
-  ): Promise<WidenSessionOutcome> {
+  ): Promise<WidenSessionOutcome<Saved>> {
     const handle = this.policyHandle
     assertAllowedModelRoutes(routes)
     const parentRoutes = (): AllowedModelRoute[] => {
@@ -161,39 +166,30 @@ export class SubagentModelSelectionConfig extends Service {
       const current = sessionPolicy(handle, agent.session)
       return current ?? { revision: undefined, routes: parentRoutes() }
     }
-    const missingFrom = (have: readonly AllowedModelRoute[]): AllowedModelRoute[] => {
-      const keys = new Set(have.map(modelRouteKey))
-      return routes.filter(route => !keys.has(modelRouteKey(route)))
-    }
     const before = held()
-    const missing = missingFrom(before.routes)
-    const confirm = new Map<string, AllowedModelRoute>()
-    for (const route of [...missing, ...steps.unsaved]) confirm.set(modelRouteKey(route), { ...route })
-    if (confirm.size === 0) {
-      await steps.persist(undefined)
-      return { kind: 'unchanged', revision: before.revision }
+    const confirm = mergeRoutes(missingRoutes(before.routes, routes), steps.unsaved)
+    if (confirm.length === 0) {
+      return { kind: 'unchanged', revision: before.revision, saved: await steps.persist(undefined) }
     }
     if (this.config.enabled.get() === false) {
       throw new Error('subagent model selection is disabled by the operator setting; routes cannot be widened')
     }
-    const approval = await steps.ask([...confirm.values()])
+    const approval = await steps.ask(confirm)
     if (approval === undefined) return { kind: 'declined' }
     assertHumanApproval(approval)
-    if (!approvalCovers(approval, [...confirm.values()])) {
+    if (!approvalCovers(approval, confirm)) {
       throw new Error('the human approval does not cover every route that needs confirmation')
     }
     signal.throwIfAborted()
-    await steps.persist(approval)
+    const saved = await steps.persist(approval)
     signal.throwIfAborted()
     const after = held()
-    if (missingFrom(after.routes).length === 0) return { kind: 'unchanged', revision: after.revision }
-    const merged = new Map(after.routes.map(route => [modelRouteKey(route), route] as const))
-    for (const route of routes) merged.set(modelRouteKey(route), { ...route })
+    if (missingRoutes(after.routes, routes).length === 0) return { kind: 'unchanged', revision: after.revision, saved }
     const revision = (after.revision ?? 0) + 1
     agent.session.append('subagent/model-selection-policy', {
-      allowedModels: [...merged.values()], origin: 'setup', revision,
+      allowedModels: mergeRoutes(after.routes, routes), origin: 'setup', revision,
     })
-    return { kind: 'widened', revision }
+    return { kind: 'widened', revision, saved }
   }
 
   /**
