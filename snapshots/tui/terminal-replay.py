@@ -88,8 +88,21 @@ def replay(node, cli, fixture, expected):
             assert process.poll() == 0, f'Terminal failed to exit cleanly: {process.poll()}'
             actual = [json.loads(line) for line in persisted.read_text().splitlines()]
             assert actual[:len(rows)] == rows, 'Resuming rewrote recorded Session history'
+            appended = actual[len(rows):]
             assert all(row['type'] in {'session/end-seed', 'agent/inbox/spliced'}
-                       for row in actual[len(rows):]), 'Resuming started unexpected work'
+                       for row in appended), 'Resuming started unexpected work'
+            assert all(row['data'] == {} for row in appended if row['type'] == 'session/end-seed')
+            inbox = [row['data'] for row in appended if row['type'] == 'agent/inbox/spliced']
+            if inbox:
+                assert len(inbox) == 2, 'Resuming left unexpected inbox work'
+                inserted, canceled = inbox
+                assert inserted['target'] == 'next-step' and inserted['start'] == 0
+                assert inserted.get('removedCount', 0) == 0 and len(inserted['inserted']) == 1
+                hook = inserted['inserted'][0]
+                assert hook['source'] == {'kind': 'hooks-claude-code'}, 'Resuming queued an unexpected prompt'
+                assert all(part['type'] == 'text' for part in hook['content'])
+                assert canceled == {'target': 'next-step', 'start': 0, 'removedCount': 1,
+                                    'inserted': [], 'outcome': 'canceled'}, 'Resuming left pending inbox work'
         except BaseException:
             sys.stderr.write(ANSI.sub('', raw.decode('utf-8', 'replace')) + '\n')
             raise
