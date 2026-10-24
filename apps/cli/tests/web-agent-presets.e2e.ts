@@ -288,6 +288,18 @@ describe('the shipped Web composition', () => {
     expect(ctx.agentPresets.defaultId).toBe('standard')
   })
 
+  it.each(['standard', 'ptc'])('activates Claude compatibility in the shipped %s preset', async (preset) => {
+    const handle = await ctx.agents.create({
+      sessionId: SessionId(`preset-claude-compat-${preset}-${randomUUID()}`),
+      setup: agentCtx => ctx.agentPresets.mount(agentCtx, preset).then(() => undefined),
+    })
+    try {
+      expect(toolNames(ctx, handle.agent)).toContain('claude_agent')
+    } finally {
+      await handle.dispose()
+    }
+  })
+
   it('composes the full agent from `standard`', async () => {
     const handle = await ctx.agents.create({
       sessionId: SessionId('preset-standard'),
@@ -300,7 +312,7 @@ describe('the shipped Web composition', () => {
       // excluded for the reason the TUI composition e2e excludes them — they
       // depend on ripgrep being present on the machine.
       expect(toolNames(ctx, handle.agent).filter(name => name !== 'glob' && name !== 'grep')).toEqual([
-        'ask_user_question', 'bash', 'create_goal', 'edit', 'exit_plan_mode',
+        'ask_user_question', 'bash', 'claude_agent', 'create_goal', 'edit', 'exit_plan_mode',
         'get_goal', 'interrupt_agent', 'job_kill', 'job_list', 'job_output', 'list_agents', 'list_subagent_models', 'plugin_manager', 'present', 'read', 'read_image',
         'schedule_create', 'schedule_delete', 'schedule_list', 'schedule_update',
         'send_message', 'skill',
