@@ -34,13 +34,16 @@ import {
 } from '@deepseek-ai/dsh-tool-subagent'
 import type { ModelSelectionPolicy } from '@deepseek-ai/dsh-tool-subagent'
 import * as hooksBridge from '@deepseek-ai/dsh-hooks-claude-code'
+import * as filesystemSkills from '@deepseek-ai/dsh-skill-filesystem'
+import { bundledPstackRoot } from './pstack-resources.ts'
+export { bundledPstackRoot } from './pstack-resources.ts'
 import { parse as parseYaml } from 'yaml'
 import { defaultPstackRoles, loadPstackPreferences, pstackConfigPath, savePstackPreferences } from './pstack-config.ts'
 export { loadPstackPreferences, parsePstackPreferences, pstackConfigPath, savePstackPreferences } from './pstack-config.ts'
 
 export const name = 'experimental-claude-compat'
 
-export const inject = ['tools', 'subagents', 'sessionProjections']
+export const inject = ['tools', 'subagents', 'sessionProjections', 'skills']
 
 /** One configured child LLM route. */
 export interface RouteConfig {
@@ -82,7 +85,7 @@ export interface Config {
 }
 
 export const Config: z<Config> = z.object({
-  roots: z.array(z.string()).default(['~/.agents/pstack-plugin']),
+  roots: z.array(z.string()).default([]),
   provider: z.string().default('spawn'),
   models: z.dict(z.object({
     provider: z.string().required(),
@@ -212,7 +215,7 @@ export function install(host: CompatHost, config: Config): void {
     pstack: config.pstack, modelSelection: config.modelSelection, hooks: config.hooks,
     ...config.projectDir === undefined ? {} : { projectDir: config.projectDir } }
   const roots = [...new Set([...config.roots.map(root => absoluteFrom(root, process.cwd())),
-    ...preferences === undefined ? [] : [preferences.root]])]
+    ...preferences === undefined ? [] : [preferences.root ?? bundledPstackRoot()]])]
   const agents: NamedAgent[] = [
     { type: 'general-purpose', description: 'General-purpose task runner, including panel members.', body: '', path: 'native' },
     ...roots.flatMap(root => discoverAgents(root)),
@@ -234,8 +237,9 @@ export function install(host: CompatHost, config: Config): void {
     'Explicit type and wildcard routes are authoritative when modelSelection is off; conflicting model choices fail rather than being ignored.',
     `Configured model aliases: ${aliasCatalog}.`,
   ].join('\n')
-  const pstackRoot = config.pstack === undefined ? preferences?.root : absoluteFrom(config.pstack.root, process.cwd())
-  if (pstackRoot !== undefined) {
+  const pstackRoot = config.pstack === undefined
+    ? preferences?.root ?? bundledPstackRoot() : absoluteFrom(config.pstack.root, process.cwd())
+  {
     if (host.onAgentCreated === undefined) throw new Error('native pstack context requires agent initialization support')
     const sheetPath = config.pstack === undefined ? pstackConfigPath() : absoluteFrom(config.pstack.sheetPath, process.cwd())
     const mandatePath = join(pstackRoot, 'hooks', 'session-start-context.md')
@@ -246,8 +250,8 @@ export function install(host: CompatHost, config: Config): void {
       const sheet = bytes === undefined
         ? (() => {
           const saved = loadPstackPreferences()
-          return [...Object.entries({ ...defaultPstackRoles(), ...saved?.roles }).map(([role, choice]) => `${role}: ${choice}`),
-            `default effort: ${saved?.defaultEffort ?? 'session'}`, `session hook: ${saved?.sessionHook === false ? 'off' : 'on'}`].join('\n')
+          return [...Object.entries({ ...defaultPstackRoles(), ...saved.roles }).map(([role, choice]) => `${role}: ${choice}`),
+            `default effort: ${saved.defaultEffort ?? 'session'}`, `session hook: ${saved.sessionHook === false ? 'off' : 'on'}`].join('\n')
         })()
         : bytes.toString(bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf16le' : 'utf8')
           .replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
@@ -255,7 +259,7 @@ export function install(host: CompatHost, config: Config): void {
       const roles = sheet.split('\n').filter(line => /^[a-z][a-z ,_-]*: .+$/.test(line)
         && !line.startsWith('session hook:'))
       return [hookOff || isChild ? '' : readFileSync(mandatePath, 'utf8').trim(), adaptation,
-        `Saved pstack model choices (${sheetPath}); use these role choices with claude_agent:`, ...roles,
+        `Saved pstack model choices (${config.pstack === undefined ? '$DSH_HOME/pstack/config.json' : JSON.stringify(sheetPath)}); use these role choices with claude_agent:`, ...roles,
         preferences !== undefined && Object.keys(preferences.modelAliases).length === 0
           ? 'Pstack models are not configured. Ask the user which models to use via setup-pstack; discover models with claude_agent_models and save with claude_agent_setup. Until configured, inherit the parent route; never invent aliases.' : '',
       ].join('\n\n')
@@ -465,7 +469,7 @@ export function install(host: CompatHost, config: Config): void {
       // Resolve every selected model and effort before publishing preferences.
       const { parsePstackPreferences } = await import('./pstack-config.ts')
       const current = loadPstackPreferences()
-      if (current === undefined || typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('pstack setup requires installed pstack and a preferences object')
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('pstack setup requires a preferences object')
       const updates = value as Record<string, unknown>
       const validated = parsePstackPreferences({ ...current, ...updates,
         modelAliases: { ...current.modelAliases, ...typeof updates.modelAliases === 'object' && updates.modelAliases !== null && !Array.isArray(updates.modelAliases) ? updates.modelAliases : {} },
@@ -527,10 +531,16 @@ export function install(host: CompatHost, config: Config): void {
  * @returns when the Session policy projection and compatibility tools are installed.
  */
 export async function apply(ctx: Context, config: Config): Promise<void> {
+  const preferences = config.pstack === undefined ? loadPstackPreferences() : undefined
+  const root = config.pstack === undefined ? preferences?.root ?? bundledPstackRoot() : absoluteFrom(config.pstack.root, process.cwd())
+  await ctx.plugin(filesystemSkills, {
+    providerName: 'pstack-bundled', includeDefaultRoots: false,
+    bundledSkillDir: join(root, 'skills'), watch: false,
+  })
   const settings = ctx.get('subagentModelSelection')
   if (settings !== undefined && config.pstack === undefined) ctx.effect(() => settings.registerAllowedModelsSource(() => {
-    const routes = loadPstackPreferences()?.allowedModels
-    return routes === undefined || routes.length === 0 ? undefined : routes
+    const routes = loadPstackPreferences().allowedModels
+    return routes.length === 0 ? undefined : routes
   }))
   const policy = await ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
   install({

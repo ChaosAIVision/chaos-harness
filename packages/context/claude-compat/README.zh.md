@@ -44,7 +44,7 @@ Claude Code 插件声明了三件 Harness 没有直接对应物的事情：以 `
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
-| `roots` | `['~/.agents/pstack-plugin']` | 按优先级排列的插件根目录；`~` 会被展开。 |
+| `roots` | `[]` | 按优先级排列的额外插件根目录；`~` 会被展开。全局 pstack 资源另行加载。 |
 | `provider` | `spawn` | 每次派发使用的 `ctx.subagents` provider。 |
 | `models` | `{}` | 按类型配置的路由：`{ provider, model, reasoningEffort? }`。`"*"` 为兜底；未列出的类型继承父级路由。 |
 | `modelAliases` | `{}` | 将仅含模型名的别名映射到 `{ provider, model, reasoningEffort? }`；没有内置模型兜底。 |
@@ -56,11 +56,15 @@ Claude Code 插件声明了三件 Harness 没有直接对应物的事情：以 `
 <a id="global-pstack-setup"></a>
 ### 全局 pstack 设置
 
-原生 profile 自动加载已安装的 pstack，无需 `--patch` 或项目本地配置。偏好设置位于 `$DSH_HOME/pstack/config.json`；`DSH_HOME` 默认为 `~/.dsh`。默认安装根目录为共享 agents 主目录（通常是 `~/.agents`）下的 `pstack-plugin`。这些路径不依赖工作目录。持久化的 `root` 必须是绝对路径。
+原生 profile 随 DSH 提供 pstack skill 与 agent 声明，无需安装外部插件、传入 `--patch` 或使用项目本地配置。启动时，DSH 会在 `$DSH_HOME/pstack/config.json` 不存在时创建该文件；`DSH_HOME` 默认为 `~/.dsh`。文件中的绝对路径 `root` 指向内置资源。已有文件保留其配置的外部根目录与偏好；这些路径不依赖工作目录。
 
-首次使用时，请让 agent 执行 `setup-pstack`。它使用 `claude_agent_models` 发现 provider/model id 及模型支持的档位，询问你希望使用哪些模型，然后调用 `claude_agent_setup`，将包含 `modelAliases` 和 `roles` 的 JSON 字符串作为 `preferences_json` 传入，还可提供 `defaultEffort` 和 `sessionHook`。对于新增别名路由，host 通过 `userQuestions` 请求用户直接确认：仅选择 `Authorize routes` 才会将这些路由保存到 `allowedModels`。取消或无法确认时不保存任何内容。保存后打开全新会话以加载别名与授权；当前会话的权限不会改变。
+内置资源的[引入清单](resources/pstack/upstream.json) 记录上游版本、来源归属、文件校验和，以及保留的许可证与声明文件。
 
-没有偏好文件时，已安装的 pstack 以无别名、`default: inherit-parent` 且无额外授权路由的状态启动。偏好文件与默认安装均不存在时，原生 pstack 初始化不启用。无效文件或配置的安装缺少指令文件时会失败，而非静默回退。
+首次使用时，请让 agent 执行 `setup-pstack`。它使用 `claude_agent_models` 发现 provider/model id 及模型支持的档位，询问你希望使用哪些模型，然后调用 `claude_agent_setup`，将包含 `modelAliases` 和 `roles` 的 JSON 字符串作为 `preferences_json` 传入，还可提供 `defaultEffort` 和 `sessionHook`。如果不需要额外模型路由，可保留继承角色。对于新增别名路由，host 通过 `userQuestions` 请求用户直接确认：仅选择 `Authorize routes` 才会将这些路由保存到 `allowedModels`。取消或无法确认时，已保存的偏好保持不变。保存后打开全新会话以加载别名与授权；当前会话的权限不会改变。
+
+生成的文件没有别名或额外授权路由。所有内置角色继承父模型，多成员面板保留各自独立的继承条目，`defaultEffort` 为 `session`，`sessionHook` 为 `true`。模型设置完成前，委派继承父路由，不会虚构别名。偏好无效或配置的根目录缺少指令文件时会失败，而非静默回退。
+
+DSH 不会自动提供 API key 或服务商账号。启动会话前，请配置可用的父模型与服务商凭据；设置流程发现现有实时模型目录，不会安装服务商或验证凭据。
 
 运维人员可维护以下完整文件；请将示例根目录与路由 id 替换为实际安装及目录中的值：
 
@@ -108,13 +112,13 @@ models:
 <a id="dsh-runtime-mapping-for-pstack"></a>
 ## pstack 的 DSH 运行时映射
 
-本节是将 pstack 指令适配到原生 DSH 运行时的权威参考。已安装插件提供声明与 skill；DSH 提供派发、授权、消息传递及完成结果投递。
+本节是将 pstack 指令适配到原生 DSH 运行时的权威参考。内置 pstack 资源或显式配置的外部根目录提供声明与 skill；DSH 提供派发、授权、消息传递及完成结果投递。
 
 ### Agent 类型与 skill
 
-所有 pstack `Agent` 调用都使用 `claude_agent`，包括通用面板成员，不要与标准 `subagent` 工具混用。通用任务可省略 `subagent_type`，或使用 `general-purpose`。具名类型使用发现结果中的精确命名空间和声明名。对于已安装的 pstack 声明，四个基础类型为 `pstack:poteto-agent`、`pstack:comment-sicko`、`pstack:thermo-nuclear-review-subagent` 和 `pstack:thermo-nuclear-code-quality-review-subagent`。
+所有 pstack `Agent` 调用都使用 `claude_agent`，包括通用面板成员，不要与标准 `subagent` 工具混用。通用任务可省略 `subagent_type`，或使用 `general-purpose`。具名类型使用发现结果中的精确命名空间和声明名。对于内置的 pstack 声明，四个基础类型为 `pstack:poteto-agent`、`pstack:comment-sicko`、`pstack:thermo-nuclear-review-subagent` 和 `pstack:thermo-nuclear-code-quality-review-subagent`。
 
-十个 effort 类型为 `pstack:effort-low`、`pstack:effort-medium`、`pstack:effort-high`、`pstack:effort-xhigh`、`pstack:effort-max`，以及 `pstack:poteto-agent-low`、`pstack:poteto-agent-medium`、`pstack:poteto-agent-high`、`pstack:poteto-agent-xhigh`、`pstack:poteto-agent-max`。加上四个基础类型，共有 14 个发现的具名类型，另有原生 `general-purpose`。发现结果取决于已安装文件；当前安装可用的类型以工具描述为准。声明的档位适用于选定模型，包括继承的模型；不支持的档位或与显式档位冲突都会导致失败。
+十个 effort 类型为 `pstack:effort-low`、`pstack:effort-medium`、`pstack:effort-high`、`pstack:effort-xhigh`、`pstack:effort-max`，以及 `pstack:poteto-agent-low`、`pstack:poteto-agent-medium`、`pstack:poteto-agent-high`、`pstack:poteto-agent-xhigh`、`pstack:poteto-agent-max`。加上四个基础类型，共有 14 个发现的具名类型，另有原生 `general-purpose`。发现结果取决于所选资源文件；当前会话可用的类型以工具描述为准。声明的档位适用于选定模型，包括继承的模型；不支持的档位或与显式档位冲突都会导致失败。
 
 通过 `skill` 使用目录中的精确名称加载 skill。如果 skill 目录暴露的是裸名，pstack 指令中的 `pstack:poteto-mode` 就对应 `poteto-mode`；不要虚构带命名空间的名称，也不要假设 agent 声明会注册 skill。
 

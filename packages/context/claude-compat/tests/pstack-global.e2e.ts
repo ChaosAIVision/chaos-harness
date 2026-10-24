@@ -1,6 +1,6 @@
 /** Keyless shipped-profile coverage for home-scoped pstack configuration across working directories. */
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -15,7 +15,7 @@ type ToolUse = { type: 'tool_use'; id: string; name: string; input: Record<strin
 type Text = { type: 'text'; text: string }
 const repo = fileURLToPath(new URL('../../../../', import.meta.url))
 
-async function fixture(authorize = true) {
+async function fixture(authorize = true, mode?: 'src' | 'lib') {
   const temporary = mkdtempSync(join(tmpdir(), 'pstack-global-'))
   const home = join(temporary, 'home')
   const agentsHome = join(temporary, 'agents')
@@ -73,7 +73,7 @@ async function fixture(authorize = true) {
     writeFileSync(join(root, 'hooks', 'session-start-context.md'), 'GLOBAL_ROOT_MANDATE\n')
   }
   async function launch(cwd: string, task: string, dumpWeb = false) {
-    const launch = resolveExampleLaunch({ srcBin: join(repo, 'apps/cli/src/bin.ts'), tsconfigPath: join(repo, 'tsconfig.json'),
+    const launch = resolveExampleLaunch({ ...mode === undefined ? {} : { mode }, srcBin: join(repo, 'apps/cli/src/bin.ts'), tsconfigPath: join(repo, 'tsconfig.json'),
       configArgs: dumpWeb ? ['--profile', 'web', '--dump-config'] : ['--profile', 'headless', '--json', task],
       env: { DSH_HOME: home, DSH_AGENTS_HOME: agentsHome, DSH_TELEMETRY_DISABLED: '1', GLOBAL_MOCK_KEY: 'keyless', DEEPSEEK_API_KEY: '' },
     })
@@ -89,7 +89,7 @@ async function fixture(authorize = true) {
     assert.deepEqual(readdirSync(cwd), [], 'launch must not require or create repo-local configuration')
     return { stdout, stderr }
   }
-  return { home, root, requests, directories, installRoot, launch,
+  return { home, agentsHome, root, requests, directories, installRoot, launch,
     respond(handler: typeof respond) { respond = handler },
     async close() {
       server.closeAllConnections()
@@ -207,6 +207,9 @@ it('leaves configuration untouched when the human declines new route authorizati
   const f = await fixture(false)
   try {
     f.installRoot()
+    await f.launch(f.directories[0]!, 'BEFORE_DECLINED_SETUP')
+    const filename = join(f.home, 'pstack', 'config.json')
+    const before = readFileSync(filename, 'utf8')
     let sent = false
     f.respond(() => {
       if (sent) return [{ type: 'text', text: 'Setup declined.' }]
@@ -217,14 +220,14 @@ it('leaves configuration untouched when the human declines new route authorizati
     })
     await f.launch(f.directories[0]!, 'DECLINE_GLOBAL_SETUP')
     assert.ok(readFileSync(join(f.home, 'approval.jsonl'), 'utf8').includes('global-review/review-model'))
-    assert.ok(!existsSync(join(f.home, 'pstack', 'config.json')), 'declined setup persisted preferences or authorization')
+    assert.equal(readFileSync(filename, 'utf8'), before, 'declined setup changed automatic preferences or authorization')
     assert.ok(sessionLogs(f.home).some(log => log.includes('not authorized by the user')), 'declined approval did not report failure')
   } finally {
     await f.close()
   }
 }, 45_000)
 
-it('auto-loads an installed pstack without configuration and delegates only on the inherited route', async () => {
+it('prefers bundled defaults over an unconfigured external installation and delegates on the inherited route', async () => {
   const f = await fixture()
   try {
     f.installRoot()
@@ -237,26 +240,120 @@ it('auto-loads an installed pstack without configuration and delegates only on t
       return [{ type: 'tool_use', id: 'inherit-unset', name: 'claude_agent', input: { description: 'Inherited review', prompt: 'UNSET_CHILD_TASK', model: 'inherit-parent' } }]
     })
     await f.launch(f.directories[0]!, 'UNSET_INSTALLED_HOME')
-    assert.ok(JSON.stringify(f.requests[0]?.body.messages).includes('GLOBAL_ROOT_MANDATE'))
+    assert.ok(JSON.stringify(f.requests[0]?.body.messages).includes('You have pstack.'))
+    assert.ok(!JSON.stringify(f.requests[0]?.body.messages).includes('GLOBAL_ROOT_MANDATE'), 'unconfigured external installation replaced bundled defaults')
     assert.ok(JSON.stringify(f.requests[0]?.body.messages).includes('inherit-parent'))
     const child = f.requests.find(wire => JSON.stringify(wire.body.messages).includes('UNSET_CHILD_TASK') && !JSON.stringify(wire.body.messages).includes('UNSET_INSTALLED_HOME'))
-    assert.ok(child, 'installed pstack did not delegate with safe inherited defaults')
+    assert.ok(child, 'bundled pstack did not delegate with safe inherited defaults')
     assert.equal(child.route, 'global-parent')
     assert.equal(child.body.model, 'parent-model')
-    assert.ok(!existsSync(join(f.home, 'pstack', 'config.json')), 'safe defaults must not persist authorization')
+    const saved = JSON.parse(readFileSync(join(f.home, 'pstack', 'config.json'), 'utf8')) as { allowedModels: unknown[] }
+    assert.deepEqual(saved.allowedModels, [], 'automatic defaults must not authorize another route')
   } finally {
     await f.close()
   }
 }, 45_000)
 
-it('boots safely with no installed pstack and no home configuration', async () => {
-  const f = await fixture()
-  try {
-    await f.launch(f.directories[0]!, 'UNCONFIGURED_HOME')
-    assert.ok(f.requests.length > 0)
-    assert.ok(!JSON.stringify(f.requests).includes('GLOBAL_ROOT_MANDATE'))
-    assert.ok(!existsSync(join(f.home, 'pstack', 'config.json')), 'an ordinary session must not silently authorize routes')
-  } finally {
-    await f.close()
+const inheritedRoles = Object.fromEntries([
+  'feature, refactoring', 'bug-fix', 'perf-issue', 'hillclimb', 'judgment and prose',
+  'strongest judgment', 'how explorer', 'how explainer', 'why investigators', 'why synthesizer',
+  'reflect tooling', 'reflect judgment, divergent, synthesizer', 'arena runners', 'arena cross-judge pool',
+  'swarm workers', 'architect runners', 'interrogate reviewers',
+].map(role => [role, ['arena runners', 'architect runners', 'interrogate reviewers'].includes(role)
+  ? 'inherit-parent, inherit-parent, inherit-parent' : 'inherit-parent']))
+
+for (const mode of ['src', 'lib'] as const) {
+  it(`cold installs bundled pstack from unrelated directories with approval and durable setup (${mode})`, async () => {
+    const f = await fixture(true, mode)
+    try {
+      assert.ok(!existsSync(f.agentsHome), 'fixture must not install an external plugin or skills')
+      const filename = join(f.home, 'pstack', 'config.json')
+      assert.ok(!existsSync(filename), 'fixture must start without preferences')
+      await f.launch(f.directories[0]!, 'COLD_BUNDLED_BOOT')
+      const initial = JSON.stringify(f.requests[0]?.body.messages)
+      assert.ok(initial.includes('You have pstack.'), 'first request lacks bundled mandate')
+      for (const [role, choice] of Object.entries(inheritedRoles)) {
+        assert.ok(initial.includes(`${role}: ${choice}`), `first request lacks inherited role ${role}`)
+      }
+      const catalog = initial.match(/<available_skills>(.*?)<\/available_skills>/s)?.[1]
+      assert.ok(catalog, 'first request lacks a skill catalog')
+      assert.equal((catalog.match(/- `[^`]+`:/g) ?? []).length, 63, 'cold catalog must expose all bundled skills')
+      const firstWire = JSON.stringify(f.requests[0]?.body)
+      for (const skill of ['poteto-mode', 'arena', 'architect', 'interrogate', 'setup-pstack']) {
+        assert.ok(initial.includes(`- \`${skill}\`:`), `bundled skill missing from model-visible catalog: ${skill}`)
+      }
+      const named = ['comment-sicko', 'poteto-agent', 'thermo-nuclear-review-subagent', 'thermo-nuclear-code-quality-review-subagent',
+        ...['low', 'medium', 'high', 'xhigh', 'max'].flatMap(level => [`effort-${level}`, `poteto-agent-${level}`])]
+      assert.equal(named.length, 14)
+      for (const name of named) assert.ok(firstWire.includes(`pstack:${name}`), `missing named agent ${name}`)
+      assert.ok(firstWire.includes('general-purpose'), 'generic agent missing')
+      const saved = JSON.parse(readFileSync(filename, 'utf8')) as { root?: string; roles: Record<string, string>; allowedModels: unknown[]; modelAliases: unknown }
+      assert.deepEqual(saved.roles, inheritedRoles)
+      assert.deepEqual(saved.allowedModels, [])
+      assert.deepEqual(saved.modelAliases, {})
+      assert.equal(saved.root, undefined, 'automatic preferences must follow bundled resources rather than pin an external installation')
+      assert.ok(!existsSync(f.agentsHome), 'boot must not depend on an external installation')
+      const before = readFileSync(filename, 'utf8')
+      await f.launch(f.directories[1]!, 'COLD_BUNDLED_REBOOT')
+      assert.equal(readFileSync(filename, 'utf8'), before, 'ordinary restart rewrote automatic preferences')
+
+      let setupSent = false
+      f.respond(() => {
+        if (setupSent) return [{ type: 'text', text: 'Saved bundled setup.' }]
+        setupSent = true
+        return [{ type: 'tool_use', id: 'cold-setup', name: 'claude_agent_setup', input: { preferences_json: JSON.stringify({
+          modelAliases: { review: { provider: 'global-review', model: 'review-model' } },
+          roles: { 'feature, refactoring': 'review' },
+        }) } }]
+      })
+      await f.launch(f.directories[0]!, 'COLD_BUNDLED_SETUP')
+      const approved = JSON.parse(readFileSync(filename, 'utf8')) as typeof saved
+      assert.equal(approved.root, saved.root)
+      assert.deepEqual(approved.roles, { ...inheritedRoles, 'feature, refactoring': 'review' })
+      assert.deepEqual(approved.modelAliases, { review: { provider: 'global-review', model: 'review-model' } })
+      assert.deepEqual(approved.allowedModels, [{ provider: 'global-review', model: 'review-model' }])
+      assert.ok(readFileSync(join(f.home, 'approval.jsonl'), 'utf8').includes('global-review/review-model'), 'setup did not request direct user approval')
+      const configured = readFileSync(filename, 'utf8')
+      for (const cwd of f.directories) {
+        const start = f.requests.length
+        let dispatched = false
+        f.respond((wire) => {
+          if (!JSON.stringify(wire.body.messages).includes('COLD_ROUTE_CHECK')) return [{ type: 'text', text: 'BUNDLED_CHILD_RESULT' }]
+          if (dispatched) return [{ type: 'text', text: 'Routes done.' }]
+          dispatched = true
+          return ['general-purpose', 'pstack:poteto-agent'].map((type, index): ToolUse => ({ type: 'tool_use', id: `cold-child-${index}`, name: 'claude_agent', input: {
+            subagent_type: type, description: 'Bundled route check', prompt: `COLD_CHILD_${index}`, model: 'review',
+          } }))
+        })
+        await f.launch(cwd, 'COLD_ROUTE_CHECK')
+        const wires = f.requests.slice(start)
+        assert.ok(JSON.stringify(wires[0]?.body.messages).includes('feature, refactoring: review'), 'fresh session lost configured role')
+        for (let index = 0; index < 2; index++) {
+          const child = wires.find(wire => JSON.stringify(wire.body.messages).includes(`COLD_CHILD_${index}`) && !JSON.stringify(wire.body.messages).includes('COLD_ROUTE_CHECK'))
+          assert.ok(child, `missing bundled child ${index}`)
+          assert.equal(child.route, 'global-review')
+          assert.equal(child.body.model, 'review-model')
+          assert.ok(!JSON.stringify(child.body.messages).includes('You have pstack.'), 'root mandate leaked into child')
+        }
+        assert.equal(readFileSync(filename, 'utf8'), configured, 'fresh session changed approved setup')
+      }
+      assert.ok(sessionLogs(f.home).some(log => log.includes('subagent/model-selection-policy') && log.includes('global-review')), 'fresh Session did not record persisted approval')
+    } finally {
+      await f.close()
+    }
+  }, 120_000)
+}
+
+it('publishes bundled pstack assets without relying on the source tree', () => {
+  const directory = join(repo, 'packages/context/claude-compat')
+  const result = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: directory, encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+  const packs = JSON.parse(result.stdout) as { files: { path: string }[] }[]
+  const files = packs[0]!.files.map(file => file.path)
+  for (const path of ['resources/pstack/.claude-plugin/plugin.json', 'resources/pstack/hooks/session-start-context.md',
+    'resources/pstack/agents/poteto-agent.md', 'resources/pstack/effort-agents/effort-high.md',
+    ...['poteto-mode', 'arena', 'architect', 'interrogate', 'setup-pstack'].map(skill => `resources/pstack/skills/${skill}/SKILL.md`)]) {
+    assert.ok(files.includes(path), `publish omits bundled asset: ${path}`)
   }
-}, 45_000)
+  assert.ok(files.includes('lib/index.js'), 'publish lacks built entry')
+})

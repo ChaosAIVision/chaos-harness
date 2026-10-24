@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { install, loadPstackPreferences, parsePstackPreferences, pstackConfigPath, savePstackPreferences } from '../src/index.ts'
+import { bundledPstackRoot, install, loadPstackPreferences, parsePstackPreferences, pstackConfigPath, savePstackPreferences } from '../src/index.ts'
 import type { CompatHost } from '../src/index.ts'
 
 let home = ''
@@ -17,6 +19,7 @@ afterEach(() => { vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: tru
 function installed() {
   mkdirSync(join(root, 'hooks'), { recursive: true })
   writeFileSync(join(root, 'hooks', 'session-start-context.md'), 'PSTACK MANDATE')
+  persist({ ...loadPstackPreferences(), root })
 }
 function persist(value: unknown) {
   mkdirSync(join(home, 'dsh', 'pstack'), { recursive: true })
@@ -24,12 +27,43 @@ function persist(value: unknown) {
 }
 
 describe('home-scoped pstack preferences', () => {
-  it('is inert without an installation or preferences', () => {
-    expect(loadPstackPreferences()).toBeUndefined()
+  it('publishes portable bundled defaults in a cold home without shared installation', () => {
+    const preferences = loadPstackPreferences()
+    expect(preferences.root).toBeUndefined()
+    expect(JSON.parse(readFileSync(pstackConfigPath(), 'utf8'))).toEqual(preferences)
+    expect(bundledPstackRoot()).toBe(fileURLToPath(new URL('../resources/pstack/', import.meta.url)))
+    expect(readdirSync(join(home, 'dsh', 'pstack'))).toEqual(['config.json'])
+    expect(loadPstackPreferences()).toEqual(preferences)
+  })
+  it('never replaces an existing external root or grants during initialization', () => {
+    const existing = { ...loadPstackPreferences(), root: '/external/pstack', allowedModels: [{ provider: 'chosen', model: 'exact' }] }
+    persist(existing)
+    const bytes = readFileSync(pstackConfigPath(), 'utf8')
+    expect(loadPstackPreferences()).toEqual(existing)
+    expect(readFileSync(pstackConfigPath(), 'utf8')).toBe(bytes)
+  })
+  it('publishes complete defaults under concurrent cold-home initialization', async () => {
+    const module = new URL('../src/pstack-config.ts', import.meta.url).href
+    const script = `import { loadPstackPreferences } from ${JSON.stringify(module)}; process.stdout.write(JSON.stringify(loadPstackPreferences()))`
+    const results = await Promise.all(Array.from({ length: 6 }, () => new Promise<string>((resolve, reject) => {
+      const child = spawn(process.execPath, ['--import', 'tsx/esm', '--input-type=module', '-e', script], { env: process.env })
+      let output = ''
+      let errors = ''
+      child.stdout.on('data', (chunk) => { output += String(chunk) })
+      child.stderr.on('data', (chunk) => { errors += String(chunk) })
+      child.on('error', reject)
+      child.on('exit', (code) => {
+        if (code === 0) resolve(output)
+        else reject(new Error(errors))
+      })
+    })))
+    expect(new Set(results).size).toBe(1)
+    expect(JSON.parse(results[0]!)).toEqual(loadPstackPreferences())
+    expect(readdirSync(join(home, 'dsh', 'pstack'))).toEqual(['config.json'])
   })
   it('initializes all 17 roles without unavailable vendor defaults', () => {
     installed()
-    const preferences = loadPstackPreferences()!
+    const preferences = loadPstackPreferences()
     expect(Object.keys(preferences.roles)).toHaveLength(17)
     expect(preferences.roles['arena runners']).toBe('inherit-parent, inherit-parent, inherit-parent')
     expect(preferences.allowedModels).toEqual([])
@@ -37,7 +71,7 @@ describe('home-scoped pstack preferences', () => {
   })
   it('accepts actual compound role keys, panel multiplicity, and spaced efforts', () => {
     installed()
-    const base = loadPstackPreferences()!
+    const base = loadPstackPreferences()
     const preferences = parsePstackPreferences({ ...base,
       modelAliases: { strong: { provider: 'test', model: 'judge' } },
       roles: { ...base.roles, 'feature, refactoring': 'strong @high',
@@ -57,10 +91,10 @@ describe('home-scoped pstack preferences', () => {
   })
   it('saves atomically, preserving operator authorizations and rejecting escalation', () => {
     installed()
-    const preferences = { ...loadPstackPreferences()!, allowedModels: [{ provider: 'test', model: 'judge' }] }
+    const preferences = { ...loadPstackPreferences(), allowedModels: [{ provider: 'test', model: 'judge' }] }
     persist(preferences)
     savePstackPreferences({ roles: { 'feature, refactoring': 'inherit-parent' } })
-    expect(loadPstackPreferences()?.allowedModels).toEqual(preferences.allowedModels)
+    expect(loadPstackPreferences().allowedModels).toEqual(preferences.allowedModels)
     const before = readFileSync(pstackConfigPath(), 'utf8')
     expect(() => savePstackPreferences({ allowedModels: [{ provider: 'evil', model: 'other' }] })).toThrow('operator-owned')
     expect(readFileSync(pstackConfigPath(), 'utf8')).toBe(before)

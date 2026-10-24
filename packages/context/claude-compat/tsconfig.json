@@ -11,6 +11,8 @@
     { "path": "../../../vendor/schemastery" },
     { "path": "../../core/tools" },
     { "path": "../../util/home-paths" },
+    { "path": "../../skill/skill" },
+    { "path": "../../skill/skill-filesystem" },
     { "path": "../../interaction/user-questions" },
     { "path": "../../core/agent" },
     { "path": "../../session/session-projection" },

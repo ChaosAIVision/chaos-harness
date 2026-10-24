@@ -459,8 +459,8 @@ export type Config = LocalConfig
 
 ## `@deepseek-ai/dsh-claude-compat`
 
-- `inject`: `tools` · `subagents` · `sessionProjections`
-- `source`: [`packages/context/claude-compat/src/index.ts:56`](../packages/context/claude-compat/src/index.ts)
+- `inject`: `tools` · `subagents` · `sessionProjections` · `skills`
+- `source`: [`packages/context/claude-compat/src/index.ts:59`](../packages/context/claude-compat/src/index.ts)
 
 ```ts config-catalog
 /** Claude plugin discovery, child routing, and initialization settings. */

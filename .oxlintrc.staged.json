@@ -13,6 +13,7 @@
     "**/.node-next-types-*/**",
     "website/.generated/**",
     "vendor/**",
+    "packages/context/claude-compat/resources/pstack/**", // Pinned third-party skills retain upstream style.
     "native/**",
     "**/*.js",
     "**/*.mjs",

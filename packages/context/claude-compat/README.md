@@ -44,7 +44,7 @@ The directory is read the way Claude Code reads it: `.claude-plugin/plugin.json`
 
 | Field | Default | Meaning |
 |---|---|---|
-| `roots` | `['~/.agents/pstack-plugin']` | Plugin roots in priority order; `~` expands. |
+| `roots` | `[]` | Additional plugin roots in priority order; `~` expands. Global pstack resources load separately. |
 | `provider` | `spawn` | `ctx.subagents` provider used for every dispatch. |
 | `models` | `{}` | Route per type: `{ provider, model, reasoningEffort? }`. `"*"` is the fallback; an unlisted type inherits the parent route. |
 | `modelAliases` | `{}` | Model-only names mapped to `{ provider, model, reasoningEffort? }`; no built-in model fallback. |
@@ -56,11 +56,15 @@ The directory is read the way Claude Code reads it: `.claude-plugin/plugin.json`
 <a id="global-pstack-setup"></a>
 ### Global pstack setup
 
-Native profiles load installed pstack automatically, without `--patch` or a project-local config. Preferences live at `$DSH_HOME/pstack/config.json`; `DSH_HOME` defaults to `~/.dsh`. The installed default root is `pstack-plugin` under the shared agents home (normally `~/.agents`). These paths do not depend on the working directory. A persisted `root` must be absolute.
+Native profiles ship pstack skills and agent declarations with DSH; no external plugin installation, `--patch`, or project-local config is required. At startup, DSH creates `$DSH_HOME/pstack/config.json` when it is absent; `DSH_HOME` defaults to `~/.dsh`. Its absolute `root` points to the bundled resources. An existing file keeps its configured external root and preferences; these paths do not depend on the working directory.
 
-On first use, ask the agent to run `setup-pstack`. It uses `claude_agent_models` to discover provider/model ids and model-specific efforts, asks which models you want, then calls `claude_agent_setup` with `preferences_json`, a JSON string containing `modelAliases` and `roles`, with optional `defaultEffort` and `sessionHook`. For new alias routes, the host asks for direct human confirmation through `userQuestions`: select exactly `Authorize routes` to save those routes in `allowedModels`. Cancellation or unavailable confirmation saves nothing. Open a fresh Session after saving to load aliases and authorization; the current Session's permissions do not change.
+The bundled [vendoring manifest](resources/pstack/upstream.json) records the upstream release, source attribution, file checksums, and retained licenses and notices.
 
-Without a preferences file, an installed pstack starts with no aliases, `default: inherit-parent`, and no additional authorized routes. If neither preferences nor the default installation exists, native pstack initialization is inactive. An invalid file or a configured installation missing its mandate fails rather than silently falling back.
+On first use, ask the agent to run `setup-pstack`. It uses `claude_agent_models` to discover provider/model ids and model-specific efforts, asks which models you want, then calls `claude_agent_setup` with `preferences_json`, a JSON string containing `modelAliases` and `roles`, with optional `defaultEffort` and `sessionHook`. Keep inherited roles if you do not want additional model routes. For new alias routes, the host asks for direct human confirmation through `userQuestions`: select exactly `Authorize routes` to save those routes in `allowedModels`. Cancellation or unavailable confirmation leaves the saved preferences unchanged. Open a fresh Session after saving to load aliases and authorization; the current Session's permissions do not change.
+
+The generated file has no aliases or additional authorized routes. All shipped roles inherit the parent model, multi-member panels retain their separate inherited entries, `defaultEffort` is `session`, and `sessionHook` is `true`. Until model setup is complete, delegation inherits the parent route rather than inventing aliases. Invalid preferences or a configured root missing its mandate fail rather than silently falling back.
+
+DSH does not provision API keys or provider accounts. Configure a working parent model and provider credentials before starting a Session; setup discovers the existing live model catalog and does not install providers or verify credentials.
 
 The operator can maintain this complete file; replace the example root and route ids with your installation and catalog values:
 
@@ -108,13 +112,13 @@ Set `pstack: { root: '~/.agents/pstack-plugin', sheetPath: '/absolute/path/to/ps
 <a id="dsh-runtime-mapping-for-pstack"></a>
 ## DSH runtime mapping for pstack
 
-This is the canonical reference for adapting pstack instructions to the native DSH runtime. The installed plugin supplies declarations and skills; DSH supplies dispatch, authorization, messaging, and completion delivery.
+This is the canonical reference for adapting pstack instructions to the native DSH runtime. Bundled pstack resources, or an explicitly configured external root, supply declarations and skills; DSH supplies dispatch, authorization, messaging, and completion delivery.
 
 ### Agent types and skills
 
-Use `claude_agent` for every pstack `Agent` call, including generic panel members, rather than mixing it with the standard `subagent` tool. Omit `subagent_type`, or use `general-purpose`, for a generic task. Named types use the exact discovered namespace and declaration name. With the installed pstack declarations, the four base types are `pstack:poteto-agent`, `pstack:comment-sicko`, `pstack:thermo-nuclear-review-subagent`, and `pstack:thermo-nuclear-code-quality-review-subagent`.
+Use `claude_agent` for every pstack `Agent` call, including generic panel members, rather than mixing it with the standard `subagent` tool. Omit `subagent_type`, or use `general-purpose`, for a generic task. Named types use the exact discovered namespace and declaration name. With the bundled pstack declarations, the four base types are `pstack:poteto-agent`, `pstack:comment-sicko`, `pstack:thermo-nuclear-review-subagent`, and `pstack:thermo-nuclear-code-quality-review-subagent`.
 
-The ten effort types are `pstack:effort-low`, `pstack:effort-medium`, `pstack:effort-high`, `pstack:effort-xhigh`, `pstack:effort-max`, and `pstack:poteto-agent-low`, `pstack:poteto-agent-medium`, `pstack:poteto-agent-high`, `pstack:poteto-agent-xhigh`, `pstack:poteto-agent-max`. Together these are 14 discovered named types, in addition to native `general-purpose`. Discovery depends on the installed files; the tool description is authoritative for the current installation. Declaration effort applies to the selected model, including inherited models; an unsupported effort or a conflicting explicit effort fails.
+The ten effort types are `pstack:effort-low`, `pstack:effort-medium`, `pstack:effort-high`, `pstack:effort-xhigh`, `pstack:effort-max`, and `pstack:poteto-agent-low`, `pstack:poteto-agent-medium`, `pstack:poteto-agent-high`, `pstack:poteto-agent-xhigh`, `pstack:poteto-agent-max`. Together these are 14 discovered named types, in addition to native `general-purpose`. Discovery depends on the selected resource files; the tool description is authoritative for the current Session. Declaration effort applies to the selected model, including inherited models; an unsupported effort or a conflicting explicit effort fails.
 
 Load skills through `skill` with the exact catalog name. A pstack instruction saying `pstack:poteto-mode` means `poteto-mode` when the skill catalog exposes that bare name; do not invent namespaced names or assume agent declarations register skills.
 

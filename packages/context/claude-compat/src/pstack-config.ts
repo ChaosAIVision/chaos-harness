@@ -1,14 +1,15 @@
 /** Home-scoped pstack preferences; route authorization remains host-owned. */
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { dirname, isAbsolute, join } from 'node:path'
-import { resolveAgentsHome, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import type { RouteConfig } from './index.ts'
 
 /** Persisted preferences shared by every profile and working directory. */
 export interface PstackPreferences {
   version: 1
-  root: string
+  /** Explicit external root; omission follows the current package's bundled resources. */
+  root?: string
   modelAliases: Record<string, RouteConfig>
   roles: Record<string, string>
   defaultEffort?: string
@@ -36,10 +37,10 @@ function identifier(value: unknown): value is string {
  * @returns validated preferences.
  */
 export function parsePstackPreferences(value: unknown): PstackPreferences {
-  if (!record(value) || value.version !== 1 || typeof value.root !== 'string' || !isAbsolute(value.root)
+  if (!record(value) || value.version !== 1 || (value.root !== undefined && (typeof value.root !== 'string' || !isAbsolute(value.root)))
     || !record(value.modelAliases) || !record(value.roles) || !Array.isArray(value.allowedModels)
     || Object.keys(value).some(key => !['version', 'root', 'modelAliases', 'roles', 'allowedModels', 'defaultEffort', 'sessionHook'].includes(key))) {
-    throw new Error('invalid pstack config: expected version 1, absolute root, modelAliases, roles, and allowedModels')
+    throw new Error('invalid pstack config: expected version 1, optional absolute root, modelAliases, roles, and allowedModels')
   }
   const modelAliases: Record<string, RouteConfig> = {}
   for (const [alias, route] of Object.entries(value.modelAliases)) {
@@ -77,7 +78,7 @@ export function parsePstackPreferences(value: unknown): PstackPreferences {
   }
   if (value.defaultEffort !== undefined && (!identifier(value.defaultEffort) || /\s/.test(value.defaultEffort))) throw new Error('invalid pstack defaultEffort')
   if (value.sessionHook !== undefined && typeof value.sessionHook !== 'boolean') throw new Error('invalid pstack sessionHook')
-  return { version: 1, root: value.root, modelAliases, roles, allowedModels,
+  return { version: 1, ...value.root === undefined ? {} : { root: value.root }, modelAliases, roles, allowedModels,
     ...value.defaultEffort === undefined ? {} : { defaultEffort: value.defaultEffort },
     ...value.sessionHook === undefined ? {} : { sessionHook: value.sessionHook } }
 }
@@ -95,18 +96,34 @@ export function defaultPstackRoles(): Record<string, string> {
     ? 'inherit-parent, inherit-parent, inherit-parent' : 'inherit-parent']))
 }
 
-/** Load persisted preferences, or activate an installed shared pstack with inherited routes.
- * @returns preferences, or undefined when neither configuration nor installation exists.
+/** Load preferences, publishing safe bundled defaults only when the file is absent.
+ * Concurrent initializers publish a complete file without replacing another writer's config.
+ * @returns persisted preferences; malformed or unreadable files fail without modification.
  */
-export function loadPstackPreferences(): PstackPreferences | undefined {
+export function loadPstackPreferences(): PstackPreferences {
   const filename = pstackConfigPath()
-  if (existsSync(filename)) {
-    try { return parsePstackPreferences(JSON.parse(readFileSync(filename, 'utf8'))) }
-    catch (error) { throw new Error(`Cannot load ${filename}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }) }
+  const read = () => parsePstackPreferences(JSON.parse(readFileSync(filename, 'utf8')))
+  try { return read() }
+  catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
+      throw new Error(`Cannot load ${filename}: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
+    }
   }
-  const root = join(resolveAgentsHome(), 'pstack-plugin')
-  if (!existsSync(join(root, 'hooks', 'session-start-context.md'))) return undefined
-  return { version: 1, root, modelAliases: {}, roles: defaultPstackRoles(), allowedModels: [], defaultEffort: 'session', sessionHook: true }
+  const initial: PstackPreferences = { version: 1, modelAliases: {},
+    roles: defaultPstackRoles(), allowedModels: [], defaultEffort: 'session', sessionHook: true }
+  mkdirSync(dirname(filename), { recursive: true })
+  const temporary = `${filename}.${randomUUID()}.tmp`
+  try {
+    writeFileSync(temporary, `${JSON.stringify(initial, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+    try { linkSync(temporary, filename) }
+    catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error
+    }
+  } finally {
+    rmSync(temporary, { force: true })
+  }
+  try { return read() }
+  catch (error) { throw new Error(`Cannot load ${filename}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }) }
 }
 
 /** Atomically save validated preferences without permitting model-authored authorization changes.
@@ -116,7 +133,6 @@ export function loadPstackPreferences(): PstackPreferences | undefined {
  */
 export function savePstackPreferences(value: unknown, approvedRoutes?: PstackPreferences['allowedModels']): string {
   const current = loadPstackPreferences()
-  if (current === undefined) throw new Error('Install pstack before saving model preferences')
   if (!record(value) || Object.keys(value).some(key => !['modelAliases', 'roles', 'defaultEffort', 'sessionHook'].includes(key))) {
     throw new Error('setup accepts only modelAliases, roles, defaultEffort, sessionHook; route authorization is operator-owned')
   }
