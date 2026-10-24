@@ -108,6 +108,16 @@
               - id: tool-workflow
                 name: '@deepseek-ai/dsh-tool-workflow'
                 disabled: true
+          # Named Claude Code subagent types, per-role model routes, and the
+          # plugin's hooks.json. Discovery is inert without a plugin root, so a
+          # machine with no Claude plugin pays one empty tool description.
+          - id: claude-compat
+            name: '@deepseek-ai/dsh-claude-compat'
+            config:
+              roots:
+                - '~/.agents/pstack-plugin'
+              provider: spawn
+              hooks: true
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
           - id: tool-todo
