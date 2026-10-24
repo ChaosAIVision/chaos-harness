@@ -595,6 +595,7 @@ describe('SubagentHeaderLineage', () => {
 
   it('retains completed ancestor paths to deeper running descendants', () => {
     const active = 'active-descendant' as SessionId
+    const finished = 'finished-descendant' as SessionId
     const entries = (id: SessionId, label: string, activity: 'running' | 'inactive'): CatalogFixtureEntry[] => [
       { id, label, activity, mode: 'continuable' },
     ]
@@ -604,9 +605,11 @@ describe('SubagentHeaderLineage', () => {
     })
     const input = props(catalog({ entries: entries(CHILD, 'worker', 'inactive') }), {
       [CHILD]: catalog({ entries: entries(GRANDCHILD, 'indexer', 'inactive') }),
-      [GRANDCHILD]: catalog({ entries: entries(active, 'deep worker', 'running') }),
+      [GRANDCHILD]: catalog({ entries: [
+        ...entries(active, 'deep worker', 'running'), ...entries(finished, 'finished worker', 'inactive'),
+      ] }),
     }, {
-      [CHILD]: completed(CHILD), [GRANDCHILD]: completed(GRANDCHILD),
+      [CHILD]: completed(CHILD), [GRANDCHILD]: completed(GRANDCHILD), [finished]: completed(finished),
       [active]: { ...summary(active, 1), running: true },
     }, { parentSessionId: PARENT, childSessionId: CHILD, mode: 'continuable' })
     render(<SubagentHeaderLineage {...input} lineageSessionId={CHILD} />)
@@ -615,6 +618,7 @@ describe('SubagentHeaderLineage', () => {
     fireEvent.click(screen.getByRole('button', { name: '展开 worker 的下级子智能体' }))
     fireEvent.click(screen.getByRole('button', { name: '展开 indexer 的下级子智能体' }))
     expect(screen.getByRole('treeitem', { name: /deep worker.*正在运行/ })).toBeTruthy()
+    expect(screen.queryByRole('treeitem', { name: /finished worker/ })).toBeNull()
   })
 
   it('keeps a completed selected child title and its parent breadcrumb address', () => {
