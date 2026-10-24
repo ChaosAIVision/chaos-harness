@@ -190,8 +190,8 @@ it('persists setup and loads named and generic authorized routes from two unrela
 }, 90_000)
 
 for (const authorize of [true, false]) {
-  it(`uses one Loader Session for discovery, ${authorize ? 'approved' : 'declined'} setup, and exact child dispatch`, async () => {
-    const f = await fixture(authorize, 'src')
+  it.each(['src', 'lib'] as const)(`uses one Loader Session for discovery, ${authorize ? 'approved' : 'declined'} setup, and exact child dispatch (%s)`, async (mode) => {
+    const f = await fixture(authorize, mode)
     try {
       const filename = join(f.home, 'pstack', 'config.json')
       mkdirSync(join(f.home, 'pstack'), { recursive: true })
