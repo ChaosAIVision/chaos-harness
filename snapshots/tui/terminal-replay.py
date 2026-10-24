@@ -18,7 +18,7 @@ import time
 ANSI = re.compile(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[=>]')
 
 
-def replay(node, cli, fixture, expected):
+def replay(node, cli, fixture, expected, frames):
     with tempfile.TemporaryDirectory(prefix='dsh-tui-snapshot-') as temporary:
         root = Path(temporary).resolve()
         cwd = root / 'project'
@@ -81,6 +81,24 @@ def replay(node, cli, fixture, expected):
                     raise AssertionError(f'Terminal exited {process.returncode} before replay was visible')
             else:
                 raise AssertionError('Terminal did not display the expected assistant reply and readiness')
+            frame_dir = Path(frames)
+            (frame_dir / 'chat.ansi').write_bytes(raw)
+            mark = len(raw)
+            os.write(master, b'\x1b[200~/model\x1b[201~\r')
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                pump()
+                if 'Select a model' in ANSI.sub('', raw[mark:].decode('utf-8', 'replace')):
+                    break
+            else:
+                raise AssertionError('Recorded Session model menu did not open')
+            for _ in range(3):
+                pump()
+            (frame_dir / 'menu.ansi').write_bytes(raw)
+            os.write(master, b'\x1b')
+            for _ in range(5):
+                pump()
+            (frame_dir / 'restored.ansi').write_bytes(raw)
             os.write(master, b'\x03')
             deadline = time.monotonic() + 15
             while process.poll() is None and time.monotonic() < deadline:
