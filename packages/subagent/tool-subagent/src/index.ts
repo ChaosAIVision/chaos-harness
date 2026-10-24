@@ -36,7 +36,7 @@ import { sessionPolicy, subagentModelSelectionProjectionDefinition } from './mod
 export { assertAllowedModelSelection, preflightChildLlmRoute } from './model-selection.ts'
 export type { ModelSelectionPolicy } from './model-selection.ts'
 /** Proof of a person's route confirmation, required by persisted authorization and Session widening. */
-export { mintHumanApproval } from './human-approval.ts'
+export { assertHumanApproval, mintHumanApproval } from './human-approval.ts'
 export type { HumanApproval } from './human-approval.ts'
 export type { WidenSessionOutcome, WidenSessionSteps } from './model-selection-settings.ts'
 /** Shared durable Session route policy readers for delegation tools. */

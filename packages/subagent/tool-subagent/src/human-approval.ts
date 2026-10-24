@@ -5,6 +5,8 @@ import type { AllowedModelRoute } from './model-selection.ts'
 
 declare const humanApproval: unique symbol
 
+const minted = new WeakSet<object>()
+
 class Approval {
   declare readonly [humanApproval]: true
 
@@ -25,7 +27,20 @@ export type HumanApproval = Approval
  * @returns the proof for those routes.
  */
 export function mintHumanApproval(routes: readonly AllowedModelRoute[]): HumanApproval {
-  return new Approval(routes.map(route => ({ provider: route.provider, model: route.model })))
+  const approval = new Approval(routes.map(route => ({ provider: route.provider, model: route.model })))
+  minted.add(approval)
+  return approval
+}
+
+/**
+ * Check at runtime that a proof came from {@link mintHumanApproval}; the brand alone is erased at compile time.
+ * @param value - candidate proof, possibly forged by structural typing or a cast.
+ * @throws when `value` was not minted by this module.
+ */
+export function assertHumanApproval(value: unknown): asserts value is HumanApproval {
+  if (typeof value !== 'object' || value === null || !minted.has(value)) {
+    throw new Error('a human approval minted from a person\'s answer is required')
+  }
 }
 
 /**

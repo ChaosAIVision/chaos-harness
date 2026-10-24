@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { bundledPstackRoot, install, loadPstackPreferences, parsePstackPreferences, pstackConfigPath, savePstackPreferences } from '../src/index.ts'
 import type { CompatHost } from '../src/index.ts'
 import { mintHumanApproval } from '@deepseek-ai/dsh-tool-subagent'
+import type { HumanApproval } from '@deepseek-ai/dsh-tool-subagent'
 
 let home = ''
 let root = ''
@@ -112,6 +113,13 @@ describe('home-scoped pstack preferences', () => {
       savePstackPreferences({ roles: {} }, { routes: [{ provider: 'evil', model: 'other' }] })
     }
     expect(forge).toBeTypeOf('function')
+  })
+  it('rejects a structurally forged approval at runtime and writes nothing', () => {
+    installed()
+    const before = readFileSync(pstackConfigPath(), 'utf8')
+    const forged = { routes: [{ provider: 'evil', model: 'other' }] } as unknown as HumanApproval
+    expect(() => savePstackPreferences({ roles: {} }, forged)).toThrow('human approval')
+    expect(readFileSync(pstackConfigPath(), 'utf8')).toBe(before)
   })
   it('loads the same native mandate and role sheet for unrelated working directories', () => {
     installed()

@@ -7,7 +7,7 @@ import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent'
 import type { ProjectionHandle } from '@deepseek-ai/dsh-session-projection'
-import { approvalCovers } from './human-approval.ts'
+import { approvalCovers, assertHumanApproval } from './human-approval.ts'
 import type { HumanApproval } from './human-approval.ts'
 import {
   sessionPolicy,
@@ -178,6 +178,7 @@ export class SubagentModelSelectionConfig extends Service {
     }
     const approval = await steps.ask([...confirm.values()])
     if (approval === undefined) return { kind: 'declined' }
+    assertHumanApproval(approval)
     if (!approvalCovers(approval, [...confirm.values()])) {
       throw new Error('the human approval does not cover every route that needs confirmation')
     }

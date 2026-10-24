@@ -206,6 +206,18 @@ describe('SubagentModelSelectionConfig.widenSession', () => {
     expect(entries(agent)).toHaveLength(1)
   })
 
+  it('rejects a structurally forged proof before persisting or appending', async () => {
+    const { ctx, create } = await boot()
+    const agent = await create()
+    const forged = { routes: [A, B] } as unknown as HumanApproval
+    const recorded = { ...steps('yes'), ask: async () => forged }
+
+    await expect(ctx.subagentModelSelection.widenSession(agent, [A, B], recorded, signal))
+      .rejects.toThrow('human approval')
+    expect(recorded.persisted).toEqual([])
+    expect(entries(agent)).toHaveLength(1)
+  })
+
   it('lets only children created after the widening inherit it', async () => {
     const { ctx, policy, create } = await boot()
     const parent = await create()
