@@ -182,7 +182,8 @@ async create(agent: Agent, request: CreateWorktreeRequest = {}, signal?: AbortSi
  * @param start - starts the delegate in the directory it must use and returns its activation.
  * @param onKept - receives each checkout this call or a previous crashed run of this Session left behind; failures are logged.
  * @param signal - cancellation of provisioning only; settlement always runs to completion.
- * @returns the activation, where it runs, and a promise for the settlement.
+ * @returns the activation, where it runs, and a promise for the settlement. Service disposal aborts provisioning
+ * and waits for admitted activations to stop and settle; the activation owner remains responsible for stopping them.
  */
 async isolate<T extends IsolatedActivation>( agent: Agent, request: IsolateRequest, start: (cwd: string) => Promise<T>, onKept: (report: KeptReport) => void, signal?: AbortSignal, ): Promise<Isolated<T>>
 
