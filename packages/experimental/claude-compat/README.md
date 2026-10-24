@@ -46,7 +46,9 @@ The directory is read the way Claude Code reads it: `.claude-plugin/plugin.json`
 | `roots` | `['~/.agents/pstack-plugin']` | Plugin roots in priority order; `~` expands. |
 | `provider` | `spawn` | `ctx.subagents` provider used for every dispatch. |
 | `models` | `{}` | Route per type: `{ provider, model, reasoningEffort? }`. `"*"` is the fallback; an unlisted type inherits the parent route. |
-| `modelSelection` | `false` | Expose `provider`/`model`/`reasoning_effort` so one dispatch can override `models`. |
+| `modelAliases` | `{}` | Model-only names mapped to `{ provider, model, reasoningEffort? }`; no built-in model fallback. |
+| `pstack` | unset | Native initialization: `{ root, sheetPath }`; reads the installed mandate and configured sheet without a Claude subprocess. |
+| `modelSelection` | `false` | Permit raw provider/model/effort overrides of `models`. |
 | `hooks` | `true` | Mount a `dsh-hooks-claude-code` bridge for each root with `hooks/hooks.json`. |
 | `projectDir` | session directory | `CLAUDE_PROJECT_DIR` handed to hook commands. |
 
@@ -59,6 +61,12 @@ models:
 ```
 
 Most providers advertise `high` as a reasoning effort; an effort the model does not list is rejected rather than silently downgraded, and the error names the available levels. A route supplied by the model (`modelSelection: true`) is resolved against the live catalog first, including that effort list, because model output is untrusted. A route written in configuration is trusted operator input: the provider id is checked and the model id is left to the provider, which reports its own error at spawn.
+
+### Model aliases and native pstack context
+
+Configure `modelAliases` with any names, including `opus`, `fable`, `sonnet`, or `haiku`. A model-only call such as `model: opus` selects that configured route. Unknown names fail with the available alias list. With `modelSelection: false`, exact type routes, then wildcard routes, take precedence over aliases; otherwise explicit selection wins. `auto` and `inherit-parent` omit child options when no authoritative route applies. Alias mappings are trusted operator routes; the existing per-session selection-policy limitation below also applies to aliases.
+
+Set `pstack: { root: '~/.agents/pstack-plugin', sheetPath: '/absolute/path/to/pstack-models.md' }` to inject saved role lines and native tool guidance at initialization. The installed `hooks/session-start-context.md` supplies the poteto-mode mandate for roots only. An exact `session hook: off` line suppresses that mandate, not role choices or tool guidance. UTF-8 BOM, UTF-16LE BOM, and CRLF sheets are supported. Missing files fail rather than silently selecting a model. Context remains enabled with `hooks: false`; with hooks on, only that root's bridged SessionStart is suppressed. Other hook points remain active.
 
 ### What the model sees
 
@@ -92,7 +100,7 @@ Most providers advertise `high` as a reasoning effort; an effort the model does 
 
 #### What the model sees
 
-`claude_agent` with its description: every discovered `<plugin>:<agent>` type, each marked with its pinned route when one is configured, plus the parameter list (`subagent_type`, `description`, `prompt`, `cwd`, and `provider`/`model`/`reasoning_effort` only while `modelSelection` is on). Nothing is registered when no root has an `agents/` directory.
+`claude_agent` with its description: every discovered `<plugin>:<agent>` type, each marked with its pinned route when one is configured, plus the parameter list (`subagent_type`, `description`, `prompt`, `cwd`, `model` for aliases, and `provider`/`reasoning_effort` only while `modelSelection` is on). Nothing is registered when no root has an `agents/` directory.
 
 #### Token effect
 
@@ -123,7 +131,8 @@ The parent's request prefix is unchanged by the dispatch. A child on the parent 
 - `paths:` frontmatter stays inert: glob-gated auto-attach is consumer behavior in `dsh-tool-skill`.
 - An explicit route bypasses the per-session `subagent/model-selection-policy` projection, which `dsh-tool-subagent` enforces. Keep `modelSelection: false` and pin routes in configuration when the Session authorizes a narrower set.
 - Persona travels in the child prompt, not its system prompt.
-- Discovery is read once at plugin load; a new `agents/*.md` needs a reload.
+- Discovery is read once at plugin load; a new `agents/*.md` needs a reload. `effort-agents` declarations are not loaded.
+- Native sheet context includes simple role lines, not arbitrary Markdown; it does not validate the complete upstream panel/role schema.
 - The hook bridge runs command hooks only, matching `dsh-hooks-claude-code`'s documented subset.
 
 ### Dev Note
@@ -132,6 +141,7 @@ The parent's request prefix is unchanged by the dispatch. A child on the parent 
 
 ```sh
 node --import tsx/esm packages/experimental/claude-compat/tests/e2e.ts
+node --import tsx/esm packages/experimental/claude-compat/tests/pstack-native.e2e.ts
 E2E_MODEL_ROUTE=deepseek-official/deepseek-v4-flash \
   node --import tsx/esm packages/experimental/claude-compat/tests/e2e.ts
 ```

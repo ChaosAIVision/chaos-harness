@@ -56,6 +56,8 @@ export interface Config {
    * `hooks.json` from each `session/new.cwd`.
    */
   configPath: string
+  /** A native initializer owns SessionStart; retain all other hook points. */
+  skipSessionStart?: boolean
   /**
    * Replaces `${CLAUDE_PLUGIN_ROOT}` in command strings (the plugin's root dir).
    */
@@ -76,6 +78,7 @@ export interface Config {
 
 export const Config: z<Config> = z.object({
   configPath: z.string().required(),
+  skipSessionStart: z.boolean(),
   pluginRoot: z.string(),
   projectDir: z.string(),
   defaultTimeoutMs: z.number().default(DEFAULT_HOOK_TIMEOUT_MS),
@@ -205,7 +208,7 @@ export function apply(ctx: Context, config: Config): void {
     return [ours, ...theirs ?? []]
   }
 
-  ctx.on('agent/created', async ({ agent, source, signal }) => {
+  if (!config.skipSessionStart) ctx.on('agent/created', async ({ agent, source, signal }) => {
     const ownerSignal = signal === undefined ? detached.signal : AbortSignal.any([signal, detached.signal])
     const run = runPoint('SessionStart', source, sessionStartPayload(agent, source), { agent, signal: ownerSignal })
       .then((merged) => {

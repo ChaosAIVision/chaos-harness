@@ -17,4 +17,12 @@
         # models:
         #   '*': { provider: local, model: glm-5.3, reasoningEffort: high }
         #   'pstack:comment-sicko': { provider: local, model: glm-5.3, reasoningEffort: high }
+        # Model-only aliases; replace these example routes with your providers.
+        modelAliases:
+          opus: { provider: local, model: glm-5.3, reasoningEffort: high }
+          sonnet: { provider: local, model: deepseek-v4.1-flash }
+        # Native context is opt-in and reads only this sheet (never rewrites it).
+        # pstack:
+        #   root: '~/.agents/pstack-plugin'
+        #   sheetPath: '/absolute/path/to/pstack-models.md'
         modelSelection: false

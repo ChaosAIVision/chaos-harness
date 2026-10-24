@@ -13,13 +13,16 @@
   zh: d46dc93fefe0dfd6
 /deepseek-ai-dsh-claude-compat/table-of-contents:
   en: d152484eb41ac6b4
-  zh: 25a869ade3faf251
+  zh: 09388d293f9be9cb
 /deepseek-ai-dsh-claude-compat/use-this-package:
-  en: 9ea59cba1eb519f4
-  zh: bca25dcf63146f4d
+  en: f022716cfe7fcfdd
+  zh: ae7c936f43703378
 /deepseek-ai-dsh-claude-compat/use-this-package/route-a-role-to-a-model-saved-in-the-profile:
   en: c25b01acb817ba83
   zh: fe072be5c948f7f6
+/deepseek-ai-dsh-claude-compat/use-this-package/model-aliases-and-native-pstack-context:
+  en: e8abed1b66b36e0d
+  zh: 759dc74e1703d7a9
 /deepseek-ai-dsh-claude-compat/use-this-package/what-the-model-sees:
   en: 868a981f107fbdcb
   zh: a5eaa2ddeff74519
@@ -39,8 +42,8 @@
   en: 4dd575230071fa4f
   zh: bf6ff1080f9b3087
 /deepseek-ai-dsh-claude-compat/model-experience/tool-catalog-entry/what-the-model-sees:
-  en: 393114b8c059283e
-  zh: b959cebd68748213
+  en: b489d1496ecc51b3
+  zh: b74c4abd51168a08
 /deepseek-ai-dsh-claude-compat/model-experience/tool-catalog-entry/token-effect:
   en: 0dc353c6747d5174
   zh: d522838cb67a464c
@@ -60,8 +63,8 @@
   en: 487c30b6f4ee612f
   zh: 2b8cc0a529696082
 /deepseek-ai-dsh-claude-compat/known-limitations-and-deferred-work:
-  en: 21bce56ba3a89f7b
-  zh: f85ab3d68f500870
+  en: cec93cda28577e89
+  zh: 3ebb86bf74f0112a
 /deepseek-ai-dsh-claude-compat/known-limitations-and-deferred-work/dev-note:
   en: d6e9f6cfb449a17e
-  zh: 54952d0f18fec2fd
+  zh: 396b4db27a494580

@@ -19,7 +19,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, LlmRuntime } from '@deepseek-ai/dsh-llm'
 import type { SubagentActivationSpec } from '@deepseek-ai/dsh-subagent'
 import * as hooksBridge from '@deepseek-ai/dsh-hooks-claude-code'
@@ -31,11 +31,15 @@ export const inject = ['tools', 'subagents']
 
 /** One configured child LLM route. */
 export interface RouteConfig {
+  /** LLM provider id configured in the profile. */
   provider: string
+  /** Model id dispatched through the configured provider. */
   model: string
+  /** Reasoning effort id; omission uses the provider default. */
   reasoningEffort?: string
 }
 
+/** Claude plugin discovery, child routing, and initialization settings. */
 export interface Config {
   /** Plugin roots to read, in priority order. `~` is expanded. */
   roots: string[]
@@ -47,6 +51,15 @@ export interface Config {
    * parent route.
    */
   models: Record<string, RouteConfig>
+  /** Model-only names resolved to operator-configured routes. */
+  modelAliases: Record<string, RouteConfig>
+  /** Native pstack initialization; replaces this root's bridged SessionStart. */
+  pstack?: {
+    /** Installed pstack plugin root containing `hooks/session-start-context.md`; `~` is expanded. */
+    root: string
+    /** Saved model-choice sheet read at agent initialization; `~` is expanded. */
+    sheetPath: string
+  } | undefined
   /** Let model-supplied `provider`/`model`/`reasoning_effort` override `models`. */
   modelSelection: boolean
   /** Mount a hook bridge for each root that has `hooks/hooks.json`. */
@@ -63,6 +76,12 @@ export const Config: z<Config> = z.object({
     model: z.string().required(),
     reasoningEffort: z.string(),
   })).default({}),
+  modelAliases: z.dict(z.object({
+    provider: z.string().required(),
+    model: z.string().required(),
+    reasoningEffort: z.string(),
+  })).default({}),
+  pstack: (z.object({ root: z.string().required(), sheetPath: z.string().required() }) as z<Config['pstack']>).default(undefined),
   modelSelection: z.boolean().default(false),
   hooks: z.boolean().default(true),
   projectDir: z.string(),
@@ -80,7 +99,9 @@ export interface CompatHost {
   /** LLM catalog, when the host mounts one. */
   readonly llm: Pick<LlmRuntime, 'listProviders' | 'resolveModelInfo'> | undefined
   /** Mount the Claude hook bridge for one plugin root. */
-  readonly mountHooks: (config: { configPath: string; pluginRoot: string; projectDir?: string }) => void
+  readonly mountHooks: (config: { configPath: string; pluginRoot: string; projectDir?: string; skipSessionStart?: boolean }) => void
+  /** Register native initialization context; the host owns listener disposal. */
+  readonly onAgentCreated?: (context: (isChild: boolean) => string | undefined) => void
 }
 
 /** One `agents/*.md` declaration, addressed as `<plugin>:<agent>`. */
@@ -171,6 +192,35 @@ export function install(host: CompatHost, config: Config): void {
   const roots = config.roots.map(root => absoluteFrom(root, process.cwd()))
   const agents = roots.flatMap(root => discoverAgents(root))
   const byType = new Map(agents.map(agent => [agent.type, agent]))
+  const aliasCatalog = Object.entries(config.modelAliases).map(([alias, route]) =>
+    `${alias} => ${route.provider}/${route.model}${route.reasoningEffort === undefined ? '' : ` @${route.reasoningEffort}`}`,
+  ).join(', ') || '(none)'
+  const adaptation = [
+    'For pstack namespaced agents use claude_agent, not the standard subagent tool.',
+    'Load skills with the skill tool using the exact catalog name; when the catalog uses bare names, pstack:poteto-mode means poteto-mode.',
+    'Effort-agent namespaces are not supported; select an alias configured with reasoningEffort instead.',
+    'Pass model as a configured alias without provider; auto or inherit-parent omits child model options.',
+    'Explicit type and wildcard routes are authoritative when modelSelection is off.',
+    `Configured model aliases: ${aliasCatalog}.`,
+  ].join('\n')
+  const pstackRoot = config.pstack === undefined ? undefined : absoluteFrom(config.pstack.root, process.cwd())
+  if (config.pstack !== undefined) {
+    if (host.onAgentCreated === undefined) throw new Error('native pstack context requires agent initialization support')
+    const sheetPath = absoluteFrom(config.pstack.sheetPath, process.cwd())
+    const mandatePath = join(absoluteFrom(config.pstack.root, process.cwd()), 'hooks', 'session-start-context.md')
+    // Fail during plugin load for a missing installation, before registering effects.
+    readFileSync(mandatePath, 'utf8')
+    host.onAgentCreated((isChild) => {
+      const bytes = readFileSync(sheetPath)
+      const sheet = bytes.toString(bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf16le' : 'utf8')
+        .replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
+      const hookOff = sheet.split('\n').includes('session hook: off')
+      const roles = sheet.split('\n').filter(line => /^[a-z][a-z ,_-]*: [a-z0-9][a-z0-9.:/, @_-]*$/.test(line)
+        && !line.startsWith('session hook:'))
+      return [hookOff || isChild ? '' : readFileSync(mandatePath, 'utf8').trim(), adaptation,
+        `Saved pstack model choices (${sheetPath}); use these role choices with claude_agent:`, ...roles].join('\n\n')
+    })
+  }
 
   const catalog = agents.length === 0
     ? 'No Claude Code subagent types were discovered.'
@@ -188,7 +238,8 @@ export function install(host: CompatHost, config: Config): void {
       'Use this whenever a skill says `subagent_type: "<plugin>:<agent>"` instead of inventing a generic subagent.',
       config.modelSelection
         ? 'Pass `provider` and `model` to override the configured route for one dispatch.'
-        : 'The route comes from the caller configuration; do not pass a model.',
+        : 'Explicit type routes come from caller configuration; otherwise select a configured model alias.',
+      adaptation,
       'Available types:',
       catalog,
     ].join('\n'),
@@ -197,9 +248,9 @@ export function install(host: CompatHost, config: Config): void {
       description: { type: 'string', required: true, description: 'Short 3-5 word task label shown in the child catalog.' },
       prompt: { type: 'string', required: true, description: 'The task the child must complete. Self-contained.' },
       cwd: { type: 'string', description: 'Optional child working directory; defaults to the parent directory.' },
+      model: { type: 'string', description: 'Configured model alias, auto, or inherit-parent; with provider, a raw model id.' },
       ...config.modelSelection ? {
         provider: { type: 'string' as const, description: 'LLM provider id configured in the profile.' },
-        model: { type: 'string' as const, description: 'Model id advertised by that provider.' },
         reasoning_effort: { type: 'string' as const, description: 'Reasoning effort id advertised by that model.' },
       } : {},
     },
@@ -219,7 +270,18 @@ export function install(host: CompatHost, config: Config): void {
       const configured = config.models[agent.type] ?? config.models['*']
       const suppliedByModel = config.modelSelection
         && (args.provider !== undefined || args.model !== undefined || args.reasoning_effort !== undefined)
-      const route = mergeRoute(configured, config.modelSelection ? args : {})
+      let route = mergeRoute(configured, config.modelSelection ? args : {})
+      if (args.model !== undefined && args.provider === undefined && (configured === undefined || config.modelSelection)) {
+        if (args.model === 'auto' || args.model === 'inherit-parent') {
+          if (args.reasoning_effort !== undefined) throw new Error('inherit-parent and auto cannot be combined with reasoning_effort; configure an alias with reasoningEffort')
+          route = {}
+        } else {
+          const alias = config.modelAliases[args.model]
+          if (alias === undefined) throw new Error(`unknown model alias "${args.model}"; configured aliases: ${Object.keys(config.modelAliases).join(', ') || '(none)'}; use auto or inherit-parent to inherit`)
+          route = { ...alias }
+          if (config.modelSelection && args.reasoning_effort !== undefined) route.reasoningEffort = args.reasoning_effort
+        }
+      }
       if (route.model !== undefined && route.provider === undefined) {
         throw new Error('`model` requires `provider`')
       }
@@ -232,6 +294,7 @@ export function install(host: CompatHost, config: Config): void {
         // A configured route is trusted operator input, like any profile field;
         // a model-supplied route is validated against the live catalog first.
         const llm = host.llm
+        if (suppliedByModel && llm === undefined) throw new Error('cannot validate selected model: llm service is unavailable')
         if (llm !== undefined) {
           const known = llm.listProviders().map(entry => entry.id)
           if (!known.includes(route.provider)) {
@@ -290,6 +353,7 @@ export function install(host: CompatHost, config: Config): void {
     host.mountHooks({
       configPath,
       pluginRoot: root,
+      ...root === pstackRoot ? { skipSessionStart: true } : {},
       ...config.projectDir === undefined ? {} : { projectDir: config.projectDir },
     })
   }
@@ -305,6 +369,14 @@ export function apply(ctx: Context, config: Config): void {
     registerTool: tool => ctx.tools.register(tool),
     startActivation: spec => ctx.subagents.startActivation(spec),
     llm: ctx.get('llm'),
+    onAgentCreated: (context) => {
+      ctx.on('agent/created', ({ agent }) => {
+        const text = context(agent.session.header.parentSession !== undefined)
+        if (text !== undefined) agent.inject(createUserMessage({
+          content: [{ type: 'text', text }], source: { kind: 'hooks-claude-code' },
+        }))
+      })
+    },
     mountHooks: (hookConfig) => {
       ctx.plugin(hooksBridge, hookConfig)
     },

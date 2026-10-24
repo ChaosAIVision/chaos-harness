@@ -282,6 +282,27 @@ describe('hooks-claude-code bridge — PostToolUse', () => {
 })
 
 describe('hooks-claude-code bridge — SessionStart', () => {
+  it('lets a native initializer suppress SessionStart without running its command', async () => {
+    const dir = writeConfig({ SessionStart: [{ hooks: [{ type: 'command', command: 'exit 99' }] }] })
+    const adapter = new MockAdapter([textResponse('ok')])
+    const ctx = new Context()
+    provideWorkingDirectoryFixture(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(LocalSubprocessRuntime)
+    await ctx.plugin(LocalBashExecutor, { timeoutMs: 10_000 })
+    const fiber = await ctx.plugin(HooksClaude, { configPath: join(dir, 'hooks.json'), skipSessionStart: true })
+    ctx.llm.registerAdapter(['mock'], adapter)
+    try {
+      const agent = await ctx.agentLoop.create(SessionId('native-start'), { provider: 'mock', model: 'mock' })
+      agent.followup(createUserMessage({ content: [{ type: 'text', text: 'go' }], source: { kind: 'user' } }))
+      await agent.whenIdle()
+      expect(events(agent).filter(event => event.type === 'hook/invoked')).toEqual([])
+      await fiber.dispose()
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
   it('a SessionStart hook injects additionalContext the first request sees', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-hooks-claude-'))
     dirs.push(dir)

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import { install } from '@deepseek-ai/dsh-claude-compat'
+import { Config as ConfigSchema, install } from '@deepseek-ai/dsh-claude-compat'
 import type { CompatHost, Config } from '@deepseek-ai/dsh-claude-compat'
 
 interface Activation {
@@ -13,7 +13,8 @@ interface Activation {
 interface Harness {
   readonly host: CompatHost
   readonly activations: Activation[]
-  readonly hooks: Array<{ configPath: string; pluginRoot: string; projectDir?: string }>
+  readonly hooks: Array<{ configPath: string; pluginRoot: string; projectDir?: string; skipSessionStart?: boolean }>
+  readonly contexts: Array<(isChild?: boolean) => string | undefined>
   readonly tool: Parameters<CompatHost['registerTool']>[0]
 }
 
@@ -45,6 +46,7 @@ function llmStub(): NonNullable<CompatHost['llm']> {
 function harness(overrides: Partial<Config> = {}): Harness {
   const activations: Activation[] = []
   const hooks: Harness['hooks'] = []
+  const contexts: Harness['contexts'] = []
   let tool: Harness['tool'] | undefined
   const host: CompatHost = {
     registerTool(candidate) {
@@ -56,6 +58,7 @@ function harness(overrides: Partial<Config> = {}): Harness {
       return { childId: 'child-1' }
     },
     llm: llmStub(),
+    onAgentCreated(context) { contexts.push((isChild = false) => context(isChild)) },
     mountHooks(config) {
       hooks.push(config)
     },
@@ -64,12 +67,13 @@ function harness(overrides: Partial<Config> = {}): Harness {
     roots: [],
     provider: 'spawn',
     models: {},
+    modelAliases: {},
     modelSelection: false,
     hooks: true,
     ...overrides,
   })
   if (tool === undefined) throw new Error('claude_agent was not registered')
-  return { host, activations, hooks, tool }
+  return { host, activations, hooks, tool, contexts }
 }
 
 const exec = { agent: { id: 'parent' }, signal: new AbortController().signal }
@@ -90,6 +94,9 @@ afterEach(async () => {
 })
 
 describe('claude-compat discovery', () => {
+  it('leaves native context disabled when configuration omits pstack', () => {
+    expect(ConfigSchema({ roots: [], provider: 'spawn', models: {}, modelAliases: {}, modelSelection: false, hooks: true }).pstack).toBeUndefined()
+  })
   it('addresses an agent by plugin namespace and advertises every type', () => {
     const { tool } = harness({ roots: [root] })
     expect(tool.description).toContain('acme:comment-sicko — A deranged comment-hater.')
@@ -177,10 +184,50 @@ describe('claude-compat routes', () => {
     }, exec as never)).rejects.toThrow('model "alpha/fast" has no reasoning effort "high"')
   })
 
+  it('resolves model-only aliases, advertises them, and preserves configured effort', async () => {
+    const { tool, activations } = harness({
+      roots: [root],
+      modelAliases: { opus: { provider: 'alpha', model: 'judge', reasoningEffort: 'high' } },
+    })
+    await tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model: 'opus' }, exec as never)
+    expect(activations[0]?.spec.request.agentOptions).toEqual({ provider: 'alpha', model: 'judge', reasoningEffort: 'high' })
+    expect(tool.description).toContain('opus => alpha/judge @high')
+  })
+
+  it.each(['auto', 'inherit-parent'])('omits child options for %s', async (model) => {
+    const { tool, activations } = harness({ roots: [root] })
+    await tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model }, exec as never)
+    expect(activations[0]?.spec.request).not.toHaveProperty('agentOptions')
+  })
+
+  it('keeps explicit type routes authoritative over aliases', async () => {
+    const { tool, activations } = harness({
+      roots: [root],
+      models: { '*': { provider: 'alpha', model: 'fast' } },
+      modelAliases: { opus: { provider: 'alpha', model: 'judge' } },
+    })
+    await tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model: 'opus' }, exec as never)
+    expect(activations[0]?.spec.request.agentOptions).toEqual({ provider: 'alpha', model: 'fast' })
+  })
+
+  it('rejects inherited aliases combined with an effort instead of discarding it', async () => {
+    const { tool, activations } = harness({ roots: [root], modelSelection: true })
+    await expect(tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model: 'auto', reasoning_effort: 'high' }, exec as never))
+      .rejects.toThrow('cannot be combined with reasoning_effort')
+    expect(activations).toEqual([])
+  })
+
+  it('rejects unknown aliases without starting a child', async () => {
+    const { tool, activations } = harness({ roots: [root] })
+    await expect(tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model: 'typo' }, exec as never))
+      .rejects.toThrow('unknown model alias "typo"')
+    expect(activations).toEqual([])
+  })
+
   it('requires provider and model together', async () => {
     const { tool } = harness({ roots: [root], modelSelection: true })
     await expect(tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model: 'judge' }, exec as never))
-      .rejects.toThrow('`model` requires `provider`')
+      .rejects.toThrow('unknown model alias "judge"')
   })
 
   it('hides the route parameters and ignores them while selection is off', async () => {
@@ -189,6 +236,25 @@ describe('claude-compat routes', () => {
     expect(parameters.properties).not.toHaveProperty('provider')
     await tool.execute({ ...task, subagent_type: 'acme:comment-sicko', provider: 'alpha', model: 'judge' }, exec as never)
     expect(activations[0]?.spec.request.agentOptions).toBeUndefined()
+  })
+})
+
+describe('native pstack initialization', () => {
+  it('loads the mandate and configured sheet at initialization without duplicating SessionStart', async () => {
+    const sheetPath = join(root, 'sheet.md')
+    await writeFile(sheetPath, '\uFEFFsession hook: on\r\nbug-fix: opus\r\n')
+    await writeFile(join(root, 'hooks', 'session-start-context.md'), '<IMPORTANT>Invoke pstack:poteto-mode</IMPORTANT>')
+    const { contexts, hooks } = harness({ roots: [root], hooks: false, pstack: { root, sheetPath } })
+    expect(hooks).toEqual([])
+    expect(contexts[0]?.()).toContain('Invoke pstack:poteto-mode')
+    expect(contexts[0]?.()).toContain('bug-fix: opus')
+    expect(contexts[0]?.(true)).not.toContain('Invoke pstack:poteto-mode')
+    expect(contexts[0]?.()).toContain('use claude_agent, not the standard subagent tool')
+    await writeFile(sheetPath, '\uFEFFsession hook: off\r\n', 'utf16le')
+    expect(contexts[0]?.()).not.toContain('Invoke pstack:poteto-mode')
+    expect(contexts[0]?.()).toContain('claude_agent')
+    const bridged = harness({ roots: [root], pstack: { root, sheetPath } })
+    expect(bridged.hooks[0]?.skipSessionStart).toBe(true)
   })
 })
 

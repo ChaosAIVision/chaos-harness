@@ -452,6 +452,56 @@ export type Config = LocalConfig
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-bash-sandbox -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-claude-compat -->
+<a id="deepseek-aidsh-claude-compat"></a>
+
+## `@deepseek-ai/dsh-claude-compat`
+
+- `inject`: `tools` · `subagents`
+- `source`: [`packages/experimental/claude-compat/src/index.ts:43`](../packages/experimental/claude-compat/src/index.ts)
+
+```ts config-catalog
+/** Claude plugin discovery, child routing, and initialization settings. */
+export interface Config {
+  /** Plugin roots to read, in priority order. `~` is expanded. */
+  roots: string[]
+  /** `ctx.subagents` provider used for every dispatch. */
+  provider: string
+  /**
+   * Routes stored per subagent type. `"*"` supplies the fallback, and the
+   * explicit `subagent_type` key wins. An unconfigured type inherits the
+   * parent route.
+   */
+  models: Record<string, RouteConfig>
+  /** Model-only names resolved to operator-configured routes. */
+  modelAliases: Record<string, RouteConfig>
+  /** Native pstack initialization; replaces this root's bridged SessionStart. */
+  pstack?: {
+    /** Installed pstack plugin root containing `hooks/session-start-context.md`; `~` is expanded. */
+    root: string
+    /** Saved model-choice sheet read at agent initialization; `~` is expanded. */
+    sheetPath: string
+  } | undefined
+  /** Let model-supplied `provider`/`model`/`reasoning_effort` override `models`. */
+  modelSelection: boolean
+  /** Mount a hook bridge for each root that has `hooks/hooks.json`. */
+  hooks: boolean
+  /** Working directory handed to hook commands; defaults to the session directory. */
+  projectDir?: string
+}
+
+/** One configured child LLM route. */
+export interface RouteConfig {
+  /** LLM provider id configured in the profile. */
+  provider: string
+  /** Model id dispatched through the configured provider. */
+  model: string
+  /** Reasoning effort id; omission uses the provider default. */
+  reasoningEffort?: string
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-claude-compat -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-client-connection -->
 <a id="deepseek-aidsh-client-connection"></a>
 
@@ -1568,6 +1618,8 @@ export interface Config {
    * `hooks.json` from each `session/new.cwd`.
    */
   configPath: string
+  /** A native initializer owns SessionStart; retain all other hook points. */
+  skipSessionStart?: boolean
   /**
    * Replaces `${CLAUDE_PLUGIN_ROOT}` in command strings (the plugin's root dir).
    */

@@ -295,6 +295,8 @@ describe('the shipped Web composition', () => {
     })
     try {
       expect(toolNames(ctx, handle.agent)).toContain('claude_agent')
+      expect(toolParameterNames(ctx, handle.agent, 'claude_agent')).toContain('model')
+      expect(toolParameterNames(ctx, handle.agent, 'claude_agent')).not.toContain('provider')
     } finally {
       await handle.dispose()
     }

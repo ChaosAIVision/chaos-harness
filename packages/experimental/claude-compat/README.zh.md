@@ -18,7 +18,7 @@ Claude Code 插件声明了三件 Harness 没有直接对应物的事情：以 `
 - [进一步探索](#further-exploration)
 - [模型体验](#model-experience)
 - [已知限制与延期工作](#known-limitations-and-deferred-work)
-- [开发者注记](#dev-note)
+- [开发备注](#dev-note)
 
 -----
 
@@ -46,7 +46,9 @@ Claude Code 插件声明了三件 Harness 没有直接对应物的事情：以 `
 | `roots` | `['~/.agents/pstack-plugin']` | 按优先级排列的插件根目录；`~` 会被展开。 |
 | `provider` | `spawn` | 每次派发使用的 `ctx.subagents` provider。 |
 | `models` | `{}` | 按类型配置的路由：`{ provider, model, reasoningEffort? }`。`"*"` 为兜底；未列出的类型继承父级路由。 |
-| `modelSelection` | `false` | 暴露 `provider`/`model`/`reasoning_effort`，允许单次派发覆盖 `models`。 |
+| `modelAliases` | `{}` | 将仅含模型名的别名映射到 `{ provider, model, reasoningEffort? }`；没有内置模型兜底。 |
+| `pstack` | 未设置 | 原生初始化：`{ root, sheetPath }`；无需 Claude 子进程即可读取已安装的指令文件与配置的模型选择表。 |
+| `modelSelection` | `false` | 允许原始 provider/model/effort 参数覆盖 `models`。 |
 | `hooks` | `true` | 为每个带 `hooks/hooks.json` 的根目录挂载 `dsh-hooks-claude-code` 桥。 |
 | `projectDir` | 会话目录 | 传给 hook 命令的 `CLAUDE_PROJECT_DIR`。 |
 
@@ -59,6 +61,12 @@ models:
 ```
 
 多数 provider 都提供 `high` 这一推理档位；模型未列出的档位会被拒绝，而不是静默降级，错误信息会列出可用档位。由模型提供的路由（`modelSelection: true`）会先对实时目录解析，包括该档位列表，因为模型输出不可信。写在配置里的路由属于可信的运维输入：只校验 provider id，模型 id 交给 provider 在派发时自行报错。
+
+### 模型别名与原生 pstack 上下文
+
+`modelAliases` 可配置任意名称，包括 `opus`、`fable`、`sonnet` 或 `haiku`。仅传模型名的调用（如 `model: opus`）会选择所配置的路由。未知名称会导致失败，并列出可用别名。`modelSelection: false` 时，精确类型路由优先，其次是通配路由，最后是别名；否则显式选择优先。在没有权威路由适用时，`auto` 和 `inherit-parent` 会省略子 agent 的模型选项。别名映射属于可信的运维路由；下文按会话限制选择策略的已知限制同样适用于别名。
+
+设置 `pstack: { root: '~/.agents/pstack-plugin', sheetPath: '/absolute/path/to/pstack-models.md' }` 可在初始化时注入保存的角色行和原生工具使用说明。已安装的 `hooks/session-start-context.md` 仅为根 agent 提供 poteto-mode 指令。完全匹配 `session hook: off` 的行只会禁用该指令，不影响角色选择或工具使用说明。模型选择表支持 UTF-8 BOM、UTF-16LE BOM 和 CRLF。缺失文件会导致失败，而不是静默选择模型。即使 `hooks: false`，上下文仍然启用；开启 hook 时，只跳过该根目录经桥接的 SessionStart，其他 hook 点保持启用。
 
 ### 模型看到什么
 
@@ -92,7 +100,7 @@ models:
 
 #### 模型看到什么
 
-`claude_agent` 及其描述：所有已发现的 `<plugin>:<agent>` 类型，配置了固定路由的类型会附带标注；参数列表（`subagent_type`、`description`、`prompt`、`cwd`，以及仅在 `modelSelection` 开启时的 `provider`/`model`/`reasoning_effort`）。当没有任何根目录包含 `agents/` 时，不会注册任何内容。
+`claude_agent` 及其描述：所有已发现的 `<plugin>:<agent>` 类型，配置了固定路由的类型会附带标注；参数列表（`subagent_type`、`description`、`prompt`、`cwd`、用于别名的 `model`，以及仅在 `modelSelection` 开启时的 `provider`/`reasoning_effort`）。当没有任何根目录包含 `agents/` 时，不会注册任何内容。
 
 #### Token 影响
 
@@ -123,16 +131,18 @@ models:
 - `paths:` frontmatter 仍然无效：按 glob 自动附加属于 `dsh-tool-skill` 的消费者行为。
 - 显式路由会绕过 `dsh-tool-subagent` 所执行的按会话 `subagent/model-selection-policy` 投影。当会话只授权更窄的集合时，请保持 `modelSelection: false` 并在配置中固定路由。
 - 人格文本随子 agent 的 prompt 传递，而不是 system prompt。
-- 发现只在插件加载时读取一次；新增 `agents/*.md` 需要重新加载。
+- 发现只在插件加载时读取一次；新增 `agents/*.md` 需要重新加载。不会加载 `effort-agents` 声明。
+- 原生模型选择表上下文只包含简单的角色行，不处理任意 Markdown；它不会校验完整的上游面板/角色 schema。
 - hook 桥只运行命令 hook，与 `dsh-hooks-claude-code` 已记录的子集一致。
 
 <a id="dev-note"></a>
-### 开发者注记
+### 开发备注
 
 `tests/e2e.ts` 不属于 vitest 套件：它会针对 `llm-mock-server` 启动真实的 headless profile，耗时数秒。改动派发或路由后请手工运行：
 
 ```sh
 node --import tsx/esm packages/experimental/claude-compat/tests/e2e.ts
+node --import tsx/esm packages/experimental/claude-compat/tests/pstack-native.e2e.ts
 E2E_MODEL_ROUTE=deepseek-official/deepseek-v4-flash \
   node --import tsx/esm packages/experimental/claude-compat/tests/e2e.ts
 ```
