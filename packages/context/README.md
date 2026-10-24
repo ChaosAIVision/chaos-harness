@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The context group provides request-context plugins and maintained Claude Code compatibility packages. Request-context plugins add model-visible context without defining tools: workspace instruction files become guidance, `@file` mentions offer path completion, other sessions can be referenced as bounded snapshots, and the model can see the current time and the agent's tmux location. `agent-instructions` ships in `dsh-base`; `claude-compat` ships in Web and headless compositions. Other context plugins are opt-in. Context is durable: injected instructions and references enter session history as user-role messages, so they persist, replay, and compact like other conversation content. This page maps the group; each package README owns the per-package contract.
+The context group provides request-context plugins and Claude Code compatibility packages. Request-context plugins add model-visible context without defining tools: workspace instruction files become guidance, `@file` mentions offer path completion, other sessions can be referenced as bounded snapshots, and the model can see the current time and the agent's tmux location. `agent-instructions` ships in `dsh-base`; `claude-compat` ships in Web and headless compositions. Other context plugins are opt-in. Context is durable: injected instructions and references enter session history as user-role messages, so they persist, replay, and compact like other conversation content. Each package README owns its contract.
 
 ## Table of Contents
 
