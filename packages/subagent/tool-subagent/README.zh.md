@@ -90,6 +90,8 @@ kind: "package-reference"
 
 ### 设计理念
 
+包根入口拥有私有的人工批准登记表。设置入口从包根入口导入批准校验，打包时保留该外部导入；内联它会导致通过包根入口签发的批准被拒绝。
+
 一个实例对应一个提供方和一个工具名。插件在提供方存在时向所属组合注册定义，并在提供方离开时释放它。Agent 默认继承这份共享定义。配置了 preset 选择的常驻组合会校验引用，并在每个匹配 Agent 发布前将工具安装到其作用域。发现工具属于配置了 `modelDiscovery` 的实例，与委派执行器读取同一份持久 Session 策略。提供方不支持的数字 `maxDepth` 或配置的 LLM 选择会使挂载失败。同一作用域中可以有多个名称不同的委派工具公开模型选择。
 
 ### Activation 所有权
@@ -111,8 +113,9 @@ kind: "package-reference"
 | [`src/index.ts`](src/index.ts) | 工具注册、提供方生命周期镜像、activation 请求 |
 | [`src/preset-selection.ts`](src/preset-selection.ts) | 配置的 preset 校验、模型白名单与描述引导 |
 | [`src/model-selection.ts`](src/model-selection.ts) | 请求／配置合并与实时 LLM 路由预检 |
-| [`src/model-selection-settings.ts`](src/model-selection-settings.ts) | 为新 Session 读取的宿主所有 opt-in 设置 |
-| [`src/model-selection-state.ts`](src/model-selection-state.ts) | 记录并继承已读取决定的 Session 事件 |
+| [`src/model-selection-settings.ts`](src/model-selection-settings.ts) | 为新 Session 读取的宿主所有 opt-in 设置，以及在人工批准后扩大运行中 Session 的 `widenSession` |
+| [`src/model-selection-state.ts`](src/model-selection-state.ts) | 记录、继承并扩大该决定的 Session 事件与投影；后续条目仅当来自 `setup` 且为后继修订的超集时才被接受 |
+| [`src/human-approval.ts`](src/human-approval.ts) | `HumanApproval`，即人已确认精确路由的凭证；持久化授权与 Session 扩大只接受它 |
 | [`src/list-models.ts`](src/list-models.ts) | `list_subagent_models` 运行时发现工具 |
 
 </details>

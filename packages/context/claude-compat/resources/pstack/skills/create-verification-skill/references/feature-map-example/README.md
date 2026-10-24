@@ -1,5 +1,7 @@
 # Notes verification map
 
+English | [中文](README.zh.md)
+
 This directory is the maintained source for verifying the user-facing behavior of Notes. Read the index before driving the app, then use the matching feature file as the recipe.
 
 ## Baseline preconditions

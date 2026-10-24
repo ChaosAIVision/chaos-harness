@@ -462,7 +462,7 @@ function CatalogDropdown({
   const summaries = useSessions(state => state.byId)
   const statuses = useSessionStatus(value => value)
   const catalogs = useMemo<Catalogs>(() => {
-    return Object.fromEntries(Object.entries(projections).map(([id, snapshot]) => {
+    const catalogs: Catalogs = Object.fromEntries(Object.entries(projections).map(([id, snapshot]) => {
       const projected = snapshot.values.subagentCatalog
       const state = snapshot.state === 'idle'
         ? projected === undefined ? 'loading' : 'ready'
@@ -477,7 +477,22 @@ function CatalogDropdown({
         })),
       } satisfies SubagentCatalogSnapshot]
     }))
-  }, [projections, summaries, statuses])
+    if (variant === 'count') return catalogs
+
+    const hasRunningDescendant = (id: SessionId, visited = new Set<SessionId>()): boolean => {
+      if (visited.has(id)) return false
+      visited.add(id)
+      return catalogs[id]?.entries.some(entry => entry.mode !== 'external'
+        && (entry.activity === 'running' || hasRunningDescendant(entry.id, visited))) === true
+    }
+    return Object.fromEntries(Object.entries(catalogs).map(([id, catalog]) => [id, {
+      ...catalog,
+      entries: catalog.entries.filter(entry => entry.mode === 'external'
+        || entry.activity === 'running'
+        || summaries[entry.id]?.projectionValues?.subagentTiming?.lastTurnCompleted !== true
+        || hasRunningDescendant(entry.id)),
+    }]))
+  }, [projections, summaries, statuses, variant])
   const catalog = catalogs[rootSessionId]
   const [open, setOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState<CSSProperties>()

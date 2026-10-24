@@ -1,5 +1,5 @@
-# With 1,800 tokens of headroom, a 1,000-token output reservation lowers the
-# trigger from 6,822 to 5,822, between the history and its condensed replacement.
+# With pstack context, the 1,000-token output reservation lowers the trigger
+# from 14,822 to 13,822 tokens, between the history and its condensed replacement.
 
 - id: agent-instructions
   disabled: true
@@ -17,7 +17,7 @@
 - id: compaction-basic
   name: '@deepseek-ai/dsh-compaction-basic'
   config:
-    thresholdRatio: 0.8
+    thresholdRatio: 0.95
     headroomTokens: 1800
     retainTokens: 20
     maxTokens: 32
@@ -31,7 +31,7 @@
             name: DeepSeek
             models:
               - id: deepseek-v4-flash
-                contextWindow: 8622
+                contextWindow: 16622
                 defaultMaxTokens: 1000
     - id: compaction-working-directory
       name: '../../../packages/test-support/session-snapshot/tests/fixtures/compaction-working-directory.ts'

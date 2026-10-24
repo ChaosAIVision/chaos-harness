@@ -509,6 +509,15 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
 
   it('continues through FIFO follow-up admission and receives the child follow events', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-subagent-followup'))
+    let admitted = false
+    const release = Promise.withResolvers<undefined>()
+    const offAdmission = scaffold.ctx.on('agent/pre-step', async ({ agent }, next) => {
+      if (agent.id === childId) {
+        admitted = true
+        await release.promise
+      }
+      return next()
+    })
     const ended = new Promise<void>((resolveEnded, reject) => {
       const timer = setTimeout(() => {
         off()
@@ -521,14 +530,27 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
         resolveEnded()
       })
     })
-    const input = page.getByRole('textbox', { name: 'Message or run a task, / commands, @ files or sessions' })
-    await input.fill(FOLLOWUP)
-    await input.press('Enter')
-    await expect.poll(
-      () => scaffold.ctx.agents.get(childId)?.status,
-      { timeout: 10_000 },
-    ).toBe('running')
-    await ended
+    try {
+      const input = page.getByRole('textbox', { name: 'Message or run a task, / commands, @ files or sessions' })
+      await input.fill(FOLLOWUP)
+      await input.press('Enter')
+      await expect.poll(() => admitted, { timeout: 10_000 }).toBe(true)
+      const switcher = page.getByRole('button', { name: `Switch subagent: ${LABEL}`, exact: true })
+      await switcher.hover()
+      const siblings = page.getByRole('tree', { name: 'Subagent sessions' })
+      await siblings.getByRole('treeitem', { name: new RegExp(LABEL) }).waitFor()
+      release.resolve(undefined)
+      await ended
+      await expect.poll(() => siblings.getByRole('treeitem', { name: new RegExp(LABEL) }).count(), {
+        timeout: 10_000,
+      }).toBe(0)
+      await switcher.waitFor()
+      await page.mouse.move(0, 0)
+      await expect.poll(() => switcher.getAttribute('aria-expanded')).toBe('false')
+    } finally {
+      release.resolve(undefined)
+      offAdmission()
+    }
     await expect.poll(() => page.getByText(FOLLOWUP, { exact: true }).count(), { timeout: 10_000 }).toBe(1)
     await expect.poll(() => scaffold.ctx.agents.get(childId), { timeout: 10_000 }).toBeUndefined()
     expect(await page.getByRole('button', { name: 'Stop generating' }).count()).toBe(0)

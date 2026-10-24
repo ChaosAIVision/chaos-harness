@@ -7,12 +7,12 @@
   config:
     models:
       - id: deepseek-v4-flash
-        contextWindow: 8622
+        contextWindow: 16622
         maxTokens: 1000
 
 - id: compaction-basic
   config:
-    thresholdRatio: 0.8
+    thresholdRatio: 0.95
     headroomTokens: 1800
     retainTokens: 20
     maxTokens: 32

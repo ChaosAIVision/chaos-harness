@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for 2026-10-24-compat-delegate-worktree-isolation.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-10-24-compat-delegate-worktree-isolation.md
+/agent-note-compat-delegate-worktree-isolation:
+  en: 02b4164dd1711c86
+  zh: 963c47c27f5d21ba
+/agent-note-compat-delegate-worktree-isolation/problem:
+  en: 014b469cb4d8b7cb
+  zh: d8abc337d8c10bb4
+/agent-note-compat-delegate-worktree-isolation/decision:
+  en: 95eba4bd574bbf7b
+  zh: dfc743c9863dab04
+/agent-note-compat-delegate-worktree-isolation/alternatives-considered:
+  en: 4c7b105702059044
+  zh: 7fc926f5dfc7779a
+/agent-note-compat-delegate-worktree-isolation/consequences:
+  en: ab810cbb0915af58
+  zh: 6793ce565a4b93ae

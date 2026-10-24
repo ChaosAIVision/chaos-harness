@@ -4,6 +4,6 @@ profile: sdk
 composition: default
 recording: authored
 header:
-  class: default
+  class: sdk-standard
   childSystemPrompts: [1]
   childToolSchemas: [1]

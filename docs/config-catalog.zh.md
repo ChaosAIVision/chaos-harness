@@ -460,7 +460,7 @@ export type Config = LocalConfig
 ## `@deepseek-ai/dsh-claude-compat`
 
 - `inject`: `tools` · `subagents` · `sessionProjections` · `skills`
-- `source`: [`packages/context/claude-compat/src/index.ts:59`](../packages/context/claude-compat/src/index.ts)
+- `source`: [`packages/context/claude-compat/src/index.ts:71`](../packages/context/claude-compat/src/index.ts)
 
 ```ts config-catalog
 /** Claude plugin discovery, child routing, and initialization settings. */
@@ -475,7 +475,7 @@ export interface Config {
    * parent route.
    */
   models: Record<string, RouteConfig>
-  /** Model-only names resolved to operator-configured routes; aliases do not grant Session authorization. */
+  /** Model-only routes overriding fresh home-scoped aliases; aliases do not grant Session authorization. */
   modelAliases: Record<string, RouteConfig>
   /** Native pstack initialization; replaces this root's bridged SessionStart. */
   pstack?: {
@@ -1450,7 +1450,7 @@ export type PaidTranslationProvider = 'deepseek-account' | 'deepseek-official'
 ## `@deepseek-ai/dsh-experimental-worktree`
 
 - `inject`: `workingDirectory` · `fs` · `subprocess` · `sandbox` · `sandboxPolicy`
-- `source`: [`packages/experimental/worktree/src/index.ts:19`](../packages/experimental/worktree/src/index.ts)
+- `source`: [`packages/experimental/worktree/src/index.ts:29`](../packages/experimental/worktree/src/index.ts)
 
 ```ts config-catalog
 /** Worktree location, generated names, executables, and subprocess resource limits. */
@@ -1469,6 +1469,11 @@ export interface Config {
   graceMs?: number
   /** Maximum captured bytes per subprocess output stream. */
   maxOutputBytes?: number
+  /**
+   * Revision that delegate leases start from. `remote-default` uses the local `origin/HEAD` target without
+   * fetching and falls back to `HEAD`; `head` uses the caller's `HEAD`.
+   */
+  baseRef?: 'remote-default' | 'head'
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-worktree -->
@@ -4233,7 +4238,7 @@ export interface Config {
 
 - `inject`: `tools` · `subagents` · `systemPrompt` · `sessionProjections`
 - `refs`: [`AgentOptions`](subsystems/core.zh.md)
-- `source`: [`packages/subagent/tool-subagent/src/index.ts:52`](../packages/subagent/tool-subagent/src/index.ts)
+- `source`: [`packages/subagent/tool-subagent/src/index.ts:54`](../packages/subagent/tool-subagent/src/index.ts)
 
 ```ts config-catalog
 /** Config: which registered provider this tool delegates to, plus child defaults. */

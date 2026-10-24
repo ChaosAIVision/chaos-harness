@@ -18,8 +18,8 @@
   en: 1bfbc3f0abe9ef1c
   zh: e73981e065f2c76a
 /deepseek-ai-dsh-claude-compat/use-this-package/global-pstack-setup:
-  en: 3f9ea08fb90b9f68
-  zh: 2004a98787fc78e0
+  en: 13997f94d64a7191
+  zh: 9f904754c8b3ddc2
 /deepseek-ai-dsh-claude-compat/use-this-package/route-a-role-to-a-model-saved-in-the-profile:
   en: f8b274a8b3e180ac
   zh: 8366feca44567039
@@ -33,20 +33,20 @@
   en: ea85dbbe6bb71dc6
   zh: aba520363f74ff38
 /deepseek-ai-dsh-claude-compat/dsh-runtime-mapping-for-pstack/agent-types-and-skills:
-  en: 8de9f83d385d3aa0
-  zh: 0f65fd2a77f35a5f
+  en: c3b5df771611f706
+  zh: 1a1cf04bbfd87130
 /deepseek-ai-dsh-claude-compat/dsh-runtime-mapping-for-pstack/saved-models-effort-and-authorization:
-  en: e78d95f741ede0c2
-  zh: d9f353d40fd908cb
+  en: 5af32f7eb61c4a66
+  zh: b50bb109175c87bc
 /deepseek-ai-dsh-claude-compat/dsh-runtime-mapping-for-pstack/readonly-and-working-directories:
-  en: eb5956677711221d
-  zh: 98b2c79437f8e6bf
+  en: b463e6fa1e2ed5b8
+  zh: 3f79bbfaa9233686
 /deepseek-ai-dsh-claude-compat/dsh-runtime-mapping-for-pstack/background-results-and-controls:
   en: fb0233bcde7f218c
   zh: af600234a4bd601e
 /deepseek-ai-dsh-claude-compat/understand-the-implementation:
-  en: fcfe227aa656564b
-  zh: 27231d326859a54d
+  en: be74c6c2cb67fc91
+  zh: 908c6f12470750f6
 /deepseek-ai-dsh-claude-compat/understand-the-implementation/source-map:
   en: 08522e084c1d0df1
   zh: 894a2414725d3f18

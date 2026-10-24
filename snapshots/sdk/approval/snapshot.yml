@@ -4,6 +4,8 @@ profile: sdk
 composition: default
 recording: authored
 header:
-  class: default
+  class: sdk-standard
+  pin: true
+  systemPromptSource: session/text-turn
 workspace:
   final: true

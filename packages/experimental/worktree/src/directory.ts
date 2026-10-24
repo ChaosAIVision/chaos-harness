@@ -23,3 +23,20 @@ async function main() {
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });
 `
+
+/**
+ * Static child program that replaces one small file atomically inside the process sandbox.
+ * The child receives the destination and the complete text as literal argv.
+ */
+export const WRITE_FILE = `
+import fs from 'node:fs';
+const [destination, text] = process.argv.slice(1);
+const temporary = destination + '.' + process.pid + '.tmp';
+try {
+  fs.writeFileSync(temporary, text, { flag: 'wx' });
+  fs.renameSync(temporary, destination);
+} catch (error) {
+  console.error(error.message);
+  process.exitCode = 1;
+}
+`

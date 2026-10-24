@@ -82,3 +82,7 @@
 - insert:
     - id: tool-pwsh-persistent
       name: '@deepseek-ai/dsh-tool-pwsh-persistent'
+
+# Skills are disabled; omit the skill-dependent pstack compatibility plugin.
+- id: claude-compat
+  disabled: true

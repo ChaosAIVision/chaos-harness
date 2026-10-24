@@ -23,23 +23,35 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type { WorktreeService } from '@deepseek-ai/dsh-experimental-worktree'
 import type { ContentBlock, LlmRuntime } from '@deepseek-ai/dsh-llm'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { parentAgentOptionsForDelegation } from '@deepseek-ai/dsh-subagent'
 import type { SubagentActivationSpec } from '@deepseek-ai/dsh-subagent'
 import {
   assertAllowedModelSelection,
+  mintHumanApproval,
   preflightChildLlmRoute,
+  sessionPolicy,
   subagentModelSelectionProjectionDefinition,
-  subagentModelSelectionPolicy,
 } from '@deepseek-ai/dsh-tool-subagent'
-import type { ModelSelectionPolicy } from '@deepseek-ai/dsh-tool-subagent'
+import type { HumanApproval, ModelSelectionPolicy, WidenSessionOutcome, WidenSessionSteps } from '@deepseek-ai/dsh-tool-subagent'
 import * as hooksBridge from '@deepseek-ai/dsh-hooks-claude-code'
 import * as filesystemSkills from '@deepseek-ai/dsh-skill-filesystem'
 import { bundledPstackRoot } from './pstack-resources.ts'
 export { bundledPstackRoot } from './pstack-resources.ts'
 import { parse as parseYaml } from 'yaml'
-import { defaultPstackRoles, loadPstackPreferences, pstackConfigPath, savePstackPreferences } from './pstack-config.ts'
+import { initializePstackPreferences, loadPstackPreferences, preparePstackUpdate } from './pstack-config.ts'
+import { contextMessage, loadRoleSheet, renderRoleSheet } from './role-sheet.ts'
+import type { RoleChoices, RoleSheet } from './role-sheet.ts'
 export { loadPstackPreferences, parsePstackPreferences, pstackConfigPath, savePstackPreferences } from './pstack-config.ts'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    /** Runtime report of a delegate checkout retained for review. */
+    'worktree-kept': { kind: 'worktree-kept' }
+  }
+}
 
 export const name = 'experimental-claude-compat'
 
@@ -111,13 +123,39 @@ export interface CompatHost {
   /** Register one model-facing tool and return its disposer. */
   readonly registerTool: (tool: ToolDefinition) => () => void
   /** Start one child execution. */
-  readonly startActivation: (spec: SubagentActivationSpec) => Promise<{ childId: string }>
+  readonly startActivation: (spec: SubagentActivationSpec) => Promise<{ childId: string; result: Promise<unknown> }>
+  /**
+   * Optional worktree capability. Absence hides and rejects isolation; the adapter owns kept notices.
+   * @param parent - caller whose directory and file policy select the source repository.
+   * @param cwd - source directory relative to the parent; omission uses the parent directory.
+   * @param start - dispatch the child in the service-selected directory.
+   * @param signal - cancellation of provisioning, not settlement.
+   * @returns activation and model-visible isolation or degradation description.
+   */
+  readonly isolateWorktree?: ((
+    parent: Agent,
+    cwd: string | undefined,
+    start: (cwd: string) => ReturnType<CompatHost['startActivation']>,
+    signal: AbortSignal,
+  ) => Promise<{ activation: Awaited<ReturnType<CompatHost['startActivation']>>; description: string }>) | undefined
+  /** Watch service addition, removal, and replacement; the host owns listener disposal. */
+  readonly onWorktreeChange?: (refresh: () => void) => void
   /** LLM catalog, when the host mounts one. */
   readonly llm: (Pick<LlmRuntime, 'resolveCallConfig' | 'resolveModelInfo'> & Partial<Pick<LlmRuntime, 'listProviders' | 'listModels'>>) | undefined
   /** Recorded Session authorization; omission restricts explicit selection to the parent route. */
   readonly modelSelectionPolicy?: (parent: NonNullable<SubagentActivationSpec['request']['parent']>) => ModelSelectionPolicy | undefined
-  /** Ask the human directly before persisting new route authorizations; absence fails closed. */
-  readonly approveRoutes?: (routes: Array<{ provider: string; model: string }>, exec: Parameters<ToolDefinition['execute']>[1]) => Promise<boolean>
+  /**
+   * Widen the calling Session after the host asks the person directly. The host renders the question
+   * from `routes`, runs `persist` only after an exact affirmative answer (with the proof), then appends the Session policy
+   * entry. Absence fails closed: setup can then save only preferences that need no route confirmation.
+   */
+  readonly widenSession?: (
+    exec: Parameters<ToolDefinition['execute']>[1],
+    routes: readonly { provider: string; model: string }[],
+    steps: Omit<WidenSessionSteps<string>, 'ask'>,
+  ) => Promise<WidenSessionOutcome<string>>
+  /** Queue model-facing context for an Agent's next step without waking it. */
+  readonly injectContext?: (agent: Agent, text: string) => void
   /** Mount the Claude hook bridge for one plugin root. */
   readonly mountHooks: (config: { configPath: string; pluginRoot: string; projectDir?: string; skipSessionStart?: boolean }) => void
   /** Register native initialization context; the host owns listener disposal. */
@@ -203,12 +241,27 @@ function parseEffort(value: unknown, source: string): string {
   return value
 }
 
+async function catalogRoutes(llm: CompatHost['llm']): Promise<Array<{ provider: string; model: string }>> {
+  if (llm?.listProviders === undefined || llm.listModels === undefined) return []
+  const listModels = llm.listModels.bind(llm)
+  return (await Promise.all(llm.listProviders().map(async provider =>
+    (await listModels(provider.id)).map(model => ({ provider: provider.id, model: model.id }))))).flat()
+}
+
+const withoutConfirmation: NonNullable<CompatHost['widenSession']> = async (_exec, _routes, steps) =>
+  steps.unsaved.length === 0
+    ? { kind: 'unchanged', revision: undefined, saved: await steps.persist(undefined) }
+    : { kind: 'declined' }
+
 /**
  * Install the compatibility tool and hook bridges on any host.
  * @param host - tool registry, subagent dispatch, LLM catalog, and hook mounting.
  * @param config - plugin roots, dispatch provider, routes, and hook toggle.
+ * @returns when preferences are initialized and tools and hooks are installed.
  */
-export function install(host: CompatHost, config: Config): void {
+export async function install(host: CompatHost, config: Config): Promise<void> {
+  if (config.pstack === undefined) await initializePstackPreferences(() => catalogRoutes(host.llm), config.modelAliases)
+  const widen = host.widenSession ?? withoutConfirmation
   const preferences = config.pstack === undefined ? loadPstackPreferences() : undefined
   const modelAliases = () => ({
     ...config.pstack === undefined ? loadPstackPreferences().modelAliases : {},
@@ -223,48 +276,43 @@ export function install(host: CompatHost, config: Config): void {
   const byType = new Map(agents.map(agent => [agent.type, agent]))
   const adaptation = [
     'For every pstack Agent call, generic or named, use claude_agent, not the standard subagent tool.',
-    'Use general-purpose (or omit subagent_type) for generic panel members; model aliases resolve identically for all types.',
+    'Code-writing delegates in pstack playbooks use subagent_type: pstack:poteto-agent. Generic exploration and review panels keep the type their routed skill specifies; use general-purpose (or omit subagent_type) only for generic panel members. Model aliases resolve identically for all types.',
     'Dispatch is asynchronous; run_in_background: true is accepted. Map SendMessage to send_message(agent_id, message); TaskStop to interrupt_agent(agent_id) (requests interruption, does not await exit); TaskOutput to list_agents for status, with completion delivered automatically as a message.',
     'Load skills with the skill tool using the exact catalog name; when the catalog uses bare names, pstack:poteto-mode means poteto-mode.',
     'For setup-pstack, available model names are the current configured aliases plus auto and inherit-parent. Use claude_agent_models to discover each alias route, Session authorization, and exact-model reasoning efforts (plus the inherited route). Never infer an effort is supported from its name.',
+    'Native setup-pstack steps 1 through 7: (1) discover the current catalog and saved choices with claude_agent_models; (2) ask the user which models to use; (3) map each selected exact provider/model to an alias and role; (4) ask whether the session hook stays on; (5) check live efforts from discovery; (6) save the selected edits with claude_agent_setup using preferences_json and complete any host route confirmation; (7) use the automatically injected fresh role sheet. Never edit model sheets or AGENTS.md for native setup.',
     'Effort-agent declarations apply their effort to the selected model, including auto and inherit-parent. Unsupported efforts fail explicitly.',
     'Pass model as a configured alias without provider; auto or inherit-parent inherits the parent model. reasoning_effort can change only its effort.',
     'Strip @effort from each saved role or panel entry and pass reasoning_effort separately (or select the declared effort agent). Entries without a suffix use default effort; absent default or session passes reasoning_effort: session to preserve the parent effort, overriding alias defaults. Never collapse panel entries, including inherited entries.',
     'Aliases name routes, not authorization: explicit selections require the recorded Session policy, or the parent route when no policy is recorded.',
     'Explicit type and wildcard routes are authoritative when modelSelection is off; conflicting model choices fail rather than being ignored.',
-    'Model aliases can change during this session. Call claude_agent_models for the current aliases; discovery is authoritative.',
+    'Model aliases, roles, and routes can change during this session. A later "pstack role sheet" message supersedes every earlier sheet and alias list; claude_agent_models returns the current aliases, roles, default effort, sessionHook, policyRevision, and sheetDigest and is authoritative.',
   ].join('\n')
   const pstackRoot = config.pstack === undefined
     ? preferences?.root ?? bundledPstackRoot() : absoluteFrom(config.pstack.root, process.cwd())
+  const sheetPath = config.pstack === undefined ? undefined : absoluteFrom(config.pstack.sheetPath, process.cwd())
+  const currentSheet = (): { readonly sheet: RoleSheet; readonly hookOff: boolean; readonly choices: RoleChoices } => {
+    const loaded = loadRoleSheet(sheetPath)
+    const aliases = modelAliases()
+    return {
+      hookOff: loaded.hookOff,
+      choices: loaded.choices,
+      sheet: renderRoleSheet({
+        choices: loaded.choices,
+        aliases,
+        source: loaded.source,
+        unconfiguredHint: preferences !== undefined && Object.keys(aliases).length === 0,
+      }),
+    }
+  }
   {
     if (host.onAgentCreated === undefined) throw new Error('native pstack context requires agent initialization support')
-    const sheetPath = config.pstack === undefined ? pstackConfigPath() : absoluteFrom(config.pstack.sheetPath, process.cwd())
     const mandatePath = join(pstackRoot, 'hooks', 'session-start-context.md')
     // Fail during plugin load for a missing installation, before registering effects.
     readFileSync(mandatePath, 'utf8')
     host.onAgentCreated((isChild) => {
-      const bytes = config.pstack === undefined ? undefined : readFileSync(sheetPath)
-      const sheet = bytes === undefined
-        ? (() => {
-          const saved = loadPstackPreferences()
-          return [...Object.entries({ ...defaultPstackRoles(), ...saved.roles }).map(([role, choice]) => `${role}: ${choice}`),
-            `default effort: ${saved.defaultEffort ?? 'session'}`, `session hook: ${saved.sessionHook === false ? 'off' : 'on'}`].join('\n')
-        })()
-        : bytes.toString(bytes[0] === 0xff && bytes[1] === 0xfe ? 'utf16le' : 'utf8')
-          .replace(/^\uFEFF/, '').replace(/\r\n/g, '\n')
-      const hookOff = sheet.split('\n').includes('session hook: off')
-      const roles = sheet.split('\n').filter(line => /^[a-z][a-z ,_-]*: .+$/.test(line)
-        && !line.startsWith('session hook:'))
-      const aliases = modelAliases()
-      const aliasCatalog = Object.entries(aliases).map(([alias, route]) =>
-        `${alias} => ${route.provider}/${route.model}${route.reasoningEffort === undefined ? '' : ` @${route.reasoningEffort}`}`,
-      ).join(', ') || '(none)'
-      return [hookOff || isChild ? '' : readFileSync(mandatePath, 'utf8').trim(), adaptation,
-        `Configured model aliases at initialization: ${aliasCatalog}.`,
-        `Saved pstack model choices (${config.pstack === undefined ? '$DSH_HOME/pstack/config.json' : JSON.stringify(sheetPath)}); use these role choices with claude_agent:`, ...roles,
-        preferences !== undefined && Object.keys(aliases).length === 0
-          ? 'Pstack models are not configured. Ask the user which models to use via setup-pstack; discover models with claude_agent_models and save with claude_agent_setup. Until configured, inherit the parent route; never invent aliases.' : '',
-      ].join('\n\n')
+      const { sheet, hookOff } = currentSheet()
+      return [hookOff || isChild ? '' : readFileSync(mandatePath, 'utf8').trim(), adaptation, sheet.text].join('\n\n')
     })
   }
 
@@ -278,7 +326,7 @@ export function install(host: CompatHost, config: Config): void {
       return `  - ${agent.type}${pinned}${effort}${summary}`
     }).join('\n')
 
-  host.registerTool(defineTool({
+  const registerAgentTool = () => host.registerTool(defineTool({
     name: 'claude_agent',
     description: [
       'Delegate any pstack Agent call: named agents and general-purpose tasks or panel members.',
@@ -297,7 +345,10 @@ export function install(host: CompatHost, config: Config): void {
       reasoning_effort: { type: 'string', description: 'Model-specific effort, including when inheriting the parent model.' },
       description: { type: 'string', required: true, description: 'Short 3-5 word task label shown in the child catalog.' },
       prompt: { type: 'string', required: true, description: 'The task the child must complete. Self-contained.' },
-      cwd: { type: 'string', description: 'Optional child working directory; defaults to the parent directory.' },
+      cwd: { type: 'string', description: 'Optional child working directory; defaults to the parent directory. With isolation, selects the source directory for the worktree service.' },
+      ...host.isolateWorktree === undefined ? {} : {
+        isolation: { type: 'string' as const, enum: ['worktree'], description: 'Run in a private Git worktree. Clean checkouts are removed after completion; changed checkouts are kept and reported. Outside Git, runs without isolation and reports why.' },
+      },
       model: { type: 'string', description: 'Configured model alias, auto, or inherit-parent; with provider, a raw model id.' },
       ...config.modelSelection ? {
         provider: { type: 'string' as const, description: 'LLM provider id configured in the profile.' },
@@ -310,6 +361,9 @@ export function install(host: CompatHost, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(args, exec) {
+      if (args.isolation !== undefined && host.isolateWorktree === undefined) {
+        throw new Error('claude_agent worktree isolation requires the worktree service and isolation: worktree')
+      }
       const agent = byType.get(args.subagent_type ?? 'general-purpose')
       if (args.run_in_background === false) throw new Error('claude_agent starts asynchronously; run_in_background: false is unsupported; use native child status tools')
       if (agent === undefined) {
@@ -382,27 +436,37 @@ export function install(host: CompatHost, config: Config): void {
         '',
         args.prompt,
       ].join('\n')
-      const started = await host.startActivation({
+      const start = (cwd: string | undefined) => host.startActivation({
         provider: config.provider,
         label: args.description,
         request: {
           prompt: [{ type: 'text', text: prompt }] as ContentBlock[],
           parent,
-          ...args.cwd === undefined ? {} : { cwd: args.cwd },
+          ...cwd === undefined ? {} : { cwd },
           ...args.readonly === true ? { toolFilter: { deny: ['edit', 'write'] } } : {},
           ...agentOptions === undefined ? {} : { agentOptions },
         },
         signal: exec.signal,
         delivery: 'parent',
       })
+      const isolate = args.isolation === 'worktree' ? host.isolateWorktree : undefined
+      if (args.isolation !== undefined && isolate === undefined) throw new Error('claude_agent worktree isolation requires the worktree service')
+      const isolated = isolate === undefined ? undefined : await isolate(parent, args.cwd, cwd => start(cwd), exec.signal)
+      const started = isolated?.activation ?? await start(args.cwd)
       const routeLabel = agentOptions?.provider === undefined ? 'parent route' : `${agentOptions.provider}/${agentOptions.model}`
-      return `Started ${agent.type} as subagent ${started.childId} on ${routeLabel}. Its result arrives as a message.`
+      return `Started ${agent.type} as subagent ${started.childId} on ${routeLabel}. Its result arrives as a message.${isolated === undefined ? '' : ` ${isolated.description}`}`
     },
   }))
 
+  let unregisterAgentTool = registerAgentTool()
+  host.onWorktreeChange?.(() => {
+    unregisterAgentTool()
+    unregisterAgentTool = registerAgentTool()
+  })
+
   host.registerTool(defineTool({
     name: 'claude_agent_models',
-    description: 'Discover configured model aliases for setup-pstack, their Session authorization, and live model reasoning efforts. Catalog availability does not verify credentials. auto and inherit-parent use the inherited route. Unauthorized aliases cannot be dispatched.',
+    description: 'Discover configured model aliases for setup-pstack, their Session authorization, the current role choices and default effort, and live model reasoning efforts. policyRevision and sheetDigest identify the Session policy and the role sheet in force. Catalog availability does not verify credentials. auto and inherit-parent use the inherited route. Unauthorized aliases cannot be dispatched.',
     parameters: {},
     output: {
       schema: {
@@ -412,6 +476,11 @@ export function install(host: CompatHost, config: Config): void {
           aliases: { type: 'array', items: { type: 'object', additionalProperties: true } },
           inherited: { type: 'object', additionalProperties: true },
           catalog: { type: 'array', items: { type: 'object', additionalProperties: true } },
+          roles: { type: 'object', additionalProperties: true },
+          defaultEffort: { type: 'string' },
+          sessionHook: { type: 'boolean' },
+          policyRevision: { type: 'number' },
+          sheetDigest: { type: 'string' },
         },
       },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
@@ -445,8 +514,14 @@ export function install(host: CompatHost, config: Config): void {
           provider: provider.id,
           models: (await listModels(provider.id)).map(model => ({ id: model.id, name: model.name })),
         })))
+      const { sheet, choices, hookOff } = currentSheet()
       return {
         catalog,
+        roles: choices.roles,
+        sessionHook: !hookOff,
+        ...choices.defaultEffort === undefined ? {} : { defaultEffort: choices.defaultEffort },
+        ...policy?.revision === undefined ? {} : { policyRevision: policy.revision },
+        sheetDigest: sheet.digest,
         aliases: await Promise.all(Object.entries(aliases).map(async ([alias, route]) => {
           try {
             return { alias, ...await describe(route) }
@@ -463,35 +538,26 @@ export function install(host: CompatHost, config: Config): void {
 
   if (preferences !== undefined) host.registerTool(defineTool({
     name: 'claude_agent_setup',
-    description: 'Save home-scoped pstack aliases and role choices after asking the user which models to use. Discover provider/model ids with claude_agent_models first. New routes require a separate direct human confirmation through the host question service; unavailable or declined confirmation saves nothing. Saved aliases are available on the next discovery or dispatch; existing Session authorization is unchanged.',
+    description: 'Save home-scoped pstack aliases and role choices after asking the user which models to use. Discover provider/model ids with claude_agent_models first. Only explicitly upserted aliases and explicitly patched role choices select routes, using profile overrides. Control-only edits select none. Unused catalog aliases grant nothing. Remove aliases with removeModelAliases; update every referring role in the same edit. Selected routes this Session or the saved preferences do not yet authorize need a separate direct human confirmation through the host question service; unavailable or declined confirmation saves nothing. After a confirmed save the new aliases, roles, and routes apply to this Session immediately and a fresh role sheet is injected; aliases that need no new route take effect on the next discovery or dispatch. Child sessions started earlier and other open Sessions keep the authorization they already have.',
     parameters: {
-      preferences_json: { type: 'string', required: true, description: 'JSON object with modelAliases (alias -> {provider,model,reasoningEffort?}) and roles (role -> alias or comma-separated alias@effort entries). Optional defaultEffort and sessionHook controls are accepted; do not supply allowedModels.' },
+      preferences_json: { type: 'string', required: true, description: 'JSON object with modelAliases (alias -> {provider,model,reasoningEffort?}) and roles (role -> alias or comma-separated alias@effort entries). Optional removeModelAliases (distinct alias names), defaultEffort and sessionHook are accepted. Removals cannot overlap upserts or leave role references; historical grants remain. Do not supply allowedModels.' },
     },
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
     async execute(args, exec) {
-      const value: unknown = JSON.parse(args.preferences_json)
-      // Resolve every selected model and effort before publishing preferences.
-      const { parsePstackPreferences } = await import('./pstack-config.ts')
-      const current = loadPstackPreferences()
-      if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('pstack setup requires a preferences object')
-      const updates = value as Record<string, unknown>
-      const validated = parsePstackPreferences({ ...current, ...updates,
-        modelAliases: { ...current.modelAliases, ...typeof updates.modelAliases === 'object' && updates.modelAliases !== null && !Array.isArray(updates.modelAliases) ? updates.modelAliases : {} },
-        roles: { ...current.roles, ...typeof updates.roles === 'object' && updates.roles !== null && !Array.isArray(updates.roles) ? updates.roles : {} },
-      })
+      const update = preparePstackUpdate(JSON.parse(args.preferences_json), config.modelAliases)
       if (host.llm === undefined) throw new Error('pstack setup requires the LLM catalog')
-      for (const route of Object.values(validated.modelAliases)) {
+      for (const route of update.aliasUpserts) {
         await host.llm.resolveCallConfig({ provider: route.provider, model: route.model,
           ...route.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(route.reasoningEffort) } }, exec.signal)
       }
-      for (const choice of Object.values(validated.roles)) {
+      for (const choice of Object.values(update.effectiveRoles)) {
         for (const entry of choice.split(',')) {
           const [alias, suffix] = entry.split('@').map(part => part.trim())
-          const route = alias === undefined ? undefined : validated.modelAliases[alias]
+          const route = alias === undefined ? undefined : update.effectiveAliases[alias]
           const inherited = exec.agent === undefined ? undefined : parentAgentOptionsForDelegation(exec.agent)
           const provider = route?.provider ?? inherited?.provider
           const model = route?.model ?? inherited?.model
-          const effort = suffix ?? validated.defaultEffort
+          const effort = suffix ?? update.defaultEffort
           if (provider === undefined || model === undefined) throw new Error('setup requires an effective parent route')
           const info = await host.llm.resolveModelInfo(provider, model, exec.signal)
           if (effort !== undefined && effort !== 'session' && !(info.reasoning?.efforts ?? []).some(item => String(item.id) === effort)) {
@@ -499,19 +565,22 @@ export function install(host: CompatHost, config: Config): void {
           }
         }
       }
-      const routes = [...current.allowedModels]
-      for (const route of Object.values(validated.modelAliases)) {
-        if (!routes.some(item => item.provider === route.provider && item.model === route.model)) {
-          routes.push({ provider: route.provider, model: route.model })
-        }
-      }
-      const added = routes.filter(route => !current.allowedModels.some(item =>
-        item.provider === route.provider && item.model === route.model))
-      if (added.length > 0 && (host.approveRoutes === undefined || !await host.approveRoutes(added, exec))) {
+      const parent = exec.agent
+      if (parent === undefined) throw new Error('claude_agent_setup requires a calling agent')
+      const outcome = await widen(exec, update.selectedRoutes, {
+        unsaved: update.unsavedRoutes,
+        persist: update.persist,
+      })
+      if (outcome.kind === 'declined') {
         throw new Error('Pstack model setup was not authorized by the user; no preferences were saved')
       }
       exec.signal.throwIfAborted()
-      return `Saved ${savePstackPreferences(value, routes)}. Aliases are available on the next discovery or dispatch. Explicit model choices still require host-owned Session authorization.`
+      const { sheet } = currentSheet()
+      host.injectContext?.(parent, sheet.text)
+      const policy = outcome.kind === 'widened'
+        ? `Session policy revision ${outcome.revision} is active now.`
+        : 'Session authorization is unchanged.'
+      return `Saved ${outcome.saved}. ${policy} Role sheet ${sheet.digest} was injected and supersedes earlier sheets. Explicit model choices still require host-owned Session authorization.`
     },
   }))
 
@@ -535,6 +604,7 @@ export function install(host: CompatHost, config: Config): void {
  * @returns when the Session policy projection and compatibility tools are installed.
  */
 export async function apply(ctx: Context, config: Config): Promise<void> {
+  if (config.pstack === undefined) await initializePstackPreferences(() => catalogRoutes(ctx.get('llm')), config.modelAliases)
   const preferences = config.pstack === undefined ? loadPstackPreferences() : undefined
   const root = config.pstack === undefined ? preferences?.root ?? bundledPstackRoot() : absoluteFrom(config.pstack.root, process.cwd())
   await ctx.plugin(filesystemSkills, {
@@ -547,31 +617,70 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     return routes.length === 0 ? undefined : routes
   }))
   const policy = await ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
-  install({
+  const askRoutes = async (routes: readonly { provider: string; model: string }[], exec: Parameters<ToolDefinition['execute']>[1]): Promise<HumanApproval | undefined> => {
+    const questions = ctx.get('userQuestions')
+    if (questions === undefined) return undefined
+    const result = await questions.ask({
+      questions: [{ id: 'pstack-routes', question: `Allow this session and future sessions to use these exact routes for pstack children? ${routes.map(route => `${route.provider}/${route.model}`).join(', ')}. Choosing Authorize routes applies them to this session now.`,
+        options: [{ label: 'Authorize routes' }, { label: 'Cancel' }] }],
+      ...exec.agent === undefined ? {} : { agent: exec.agent }, signal: exec.signal,
+    })
+    const answer = result.answers.find(item => item.id === 'pstack-routes')
+    return answer?.selected.length === 1 && answer.selected[0] === 'Authorize routes' && answer.custom === undefined
+      ? mintHumanApproval(routes) : undefined
+  }
+  const settlements = new Map<Agent, Set<Promise<unknown>>>()
+  ctx.on('agent/turn-stopping', async ({ agent }) => {
+    const pending = settlements.get(agent)
+    if (pending !== undefined) await Promise.all(pending)
+  })
+  const isolateWorktree: NonNullable<CompatHost['isolateWorktree']> = async (parent, cwd, start, signal) => {
+    const worktrees: WorktreeService | undefined = ctx.get('worktrees')
+    if (worktrees === undefined) throw new Error('claude_agent worktree isolation requires the worktree service')
+    const isolated = await worktrees.isolate(parent, cwd === undefined ? {} : { cwd }, start, (report) => {
+      parent.followup(createUserMessage({
+        content: [{ type: 'text', text: `Worktree kept (${report.reason}): path=${report.path} branch=${report.branch} base=${report.baseCommit} head=${report.headCommit} uncommitted=${report.uncommitted}` }],
+        source: { kind: 'worktree-kept' },
+      }))
+    }, signal)
+    const pending = settlements.get(parent) ?? new Set<Promise<unknown>>()
+    settlements.set(parent, pending)
+    pending.add(isolated.settled)
+    void isolated.settled.then(() => {
+      pending.delete(isolated.settled)
+      if (pending.size === 0) settlements.delete(parent)
+    })
+    const location = isolated.isolation
+    return {
+      activation: isolated.activation,
+      description: location.kind === 'worktree'
+        ? `Worktree isolation: cwd=${location.cwd} branch=${location.branch} base=${location.baseLabel} (${location.baseCommit}).`
+        : `Worktree isolation unavailable: ${location.reason}. Running in ${location.cwd}.`,
+    }
+  }
+  await install({
+    get isolateWorktree() { return ctx.get('worktrees') === undefined ? undefined : isolateWorktree },
+    onWorktreeChange: (refresh) => {
+      ctx.on('internal/service', (name) => { if (name === 'worktrees') refresh() })
+    },
     modelSelectionPolicy: (parent) => {
-      const routes = subagentModelSelectionPolicy(policy, parent.session)
-      return routes === undefined ? undefined : { routes }
+      const current = sessionPolicy(policy, parent.session)
+      return current === undefined ? undefined : { routes: current.routes, revision: current.revision }
     },
-    approveRoutes: async (routes, exec) => {
-      const questions = ctx.get('userQuestions')
-      if (questions === undefined) return false
-      const result = await questions.ask({
-        questions: [{ id: 'pstack-routes', question: `Allow pstack children in future sessions to use these exact routes? ${routes.map(route => `${route.provider}/${route.model}`).join(', ')}. This does not change authorization in the current session.`,
-          options: [{ label: 'Authorize routes' }, { label: 'Cancel' }] }],
-        ...exec.agent === undefined ? {} : { agent: exec.agent }, signal: exec.signal,
-      })
-      const answer = result.answers.find(item => item.id === 'pstack-routes')
-      return answer?.selected.length === 1 && answer.selected[0] === 'Authorize routes' && answer.custom === undefined
+    ...settings === undefined ? {} : {
+      widenSession: (exec, routes, steps) => {
+        if (exec.agent === undefined) throw new Error('claude_agent_setup requires a calling agent')
+        return settings.widenSession(exec.agent, routes, { ...steps, ask: asked => askRoutes(asked, exec) }, exec.signal)
+      },
     },
+    injectContext: (agent, text) => { agent.inject(contextMessage(text)) },
     registerTool: tool => ctx.tools.register(tool),
     startActivation: spec => ctx.subagents.startActivation(spec),
     llm: ctx.get('llm'),
     onAgentCreated: (context) => {
       ctx.on('agent/created', ({ agent }) => {
         const text = context(agent.session.header.parentSession !== undefined)
-        if (text !== undefined) agent.inject(createUserMessage({
-          content: [{ type: 'text', text }], source: { kind: 'hooks-claude-code' },
-        }))
+        if (text !== undefined) agent.inject(contextMessage(text))
       })
     },
     mountHooks: (hookConfig) => {

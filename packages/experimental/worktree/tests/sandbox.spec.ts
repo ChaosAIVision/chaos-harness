@@ -86,4 +86,42 @@ describe.skipIf(!sandboxUsable)('worktree standing sandbox policy', () => {
     expect(await git(root, 'branch', '--list', 'denied-admin')).toBe('')
     expect(confine.mock.calls.every(call => call[1].mode === 'workspace-write' && call[1].workspaceRoot === linked)).toBe(true)
   })
+
+  it('keeps lease metadata in the Git admin directory and settles under workspace-write without widening the grant', async () => {
+    root = await repository(process.cwd())
+    ctx = await harness(root, {}, 'workspace-write')
+    const agent = testAgent(ctx, root)
+    const confine = vi.spyOn(ctx.sandbox, 'confine')
+    const activation = async () => ({ result: Promise.resolve() })
+
+    const clean = await ctx.worktrees.isolate(agent, {}, activation, () => {})
+    expect(await clean.settled).toMatchObject({ kind: 'removed' })
+    expect(await git(root, 'branch', '--list', 'dsh/lease/*')).toBe('')
+
+    const kept: string[] = []
+    const changed = await ctx.worktrees.isolate(agent, {}, async (cwd) => {
+      await writeFile(join(cwd, 'edited.txt'), 'x')
+      return activation()
+    }, report => kept.push(report.path))
+    expect(await changed.settled).toMatchObject({ kind: 'kept', uncommitted: true })
+    if (changed.isolation.kind !== 'worktree') throw new Error('expected a worktree')
+    expect(kept).toEqual([changed.isolation.path])
+    const adminDir = await git(changed.isolation.path, 'rev-parse', '--absolute-git-dir')
+    expect(adminDir.startsWith(join(root, '.git', 'worktrees'))).toBe(true)
+    expect(JSON.parse(await readFile(join(adminDir, 'dsh-lease.json'), 'utf8'))).toMatchObject({ v: 1, state: 'kept' })
+    expect(confine.mock.calls.length).toBeGreaterThan(0)
+    expect(confine.mock.calls.every(call => call[1].mode === 'workspace-write' && call[1].workspaceRoot === root)).toBe(true)
+  })
+
+  it('refuses to provision under read-only policy and leaves no lease behind', async () => {
+    root = await repository(process.cwd())
+    ctx = await harness(root, {}, 'read-only')
+    const agent = testAgent(ctx, root)
+    const activation = async () => ({ result: Promise.resolve() })
+    const refusal = /permission denied|operation not permitted|read-only file system/i
+    await expect(ctx.worktrees.isolate(agent, {}, activation, () => {})).rejects.toThrow(refusal)
+    expect(await git(root, 'branch', '--list', 'dsh/lease/*')).toBe('')
+    expect(await git(root, 'worktree', 'list', '--porcelain')).not.toContain('dsh/lease')
+    expect(await ctx.worktrees.list(agent)).toEqual([])
+  })
 })

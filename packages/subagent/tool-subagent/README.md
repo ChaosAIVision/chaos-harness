@@ -90,6 +90,8 @@ This section explains how the tool mirrors provider lifecycle and settles runs; 
 
 ### Design concept
 
+The package root owns the private human-approval registry. The settings entry imports approval validation from that root, which its bundle keeps external; inlining it would reject approvals minted through the root entry.
+
 One instance is one provider plus one tool name. The plugin registers its definition in the owning composition while the provider is present and disposes it when the provider leaves. Agents inherit that shared definition unless preset selection is configured. A standing composition with preset selection validates references and installs the tool in each matching Agent’s scope before publication. Discovery belongs to the instance configured with `modelDiscovery` and reads the same durable Session policy as the delegation executor. A numeric `maxDepth` or configured LLM selection unsupported by the provider fails the mount. Multiple distinctly named delegation tools may expose model selection in one scope.
 
 ### Activation ownership
@@ -111,8 +113,9 @@ The tool's description derives from `provider.inheritsParentContext`: a fresh ch
 | [`src/index.ts`](src/index.ts) | Tool registration, provider lifecycle mirroring, activation requests |
 | [`src/preset-selection.ts`](src/preset-selection.ts) | Configured preset validation, model allowlist, and description guidance |
 | [`src/model-selection.ts`](src/model-selection.ts) | Request/config merge and live LLM route preflight |
-| [`src/model-selection-settings.ts`](src/model-selection-settings.ts) | Host-owned opt-in setting sampled for new Sessions |
-| [`src/model-selection-state.ts`](src/model-selection-state.ts) | Session event that records and inherits the sampled decision |
+| [`src/model-selection-settings.ts`](src/model-selection-settings.ts) | Host-owned opt-in setting sampled for new Sessions, and `widenSession` for a human-approved widening of a running Session |
+| [`src/model-selection-state.ts`](src/model-selection-state.ts) | Session event and projection that record, inherit, and widen the decision; later entries are accepted only as a successive superset from `setup` |
+| [`src/human-approval.ts`](src/human-approval.ts) | `HumanApproval`, the proof a person confirmed exact routes; persisted authorization and Session widening accept nothing else |
 | [`src/list-models.ts`](src/list-models.ts) | `list_subagent_models` runtime discovery tool |
 
 </details>

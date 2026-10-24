@@ -415,17 +415,37 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.subagentModelSelection` — `SubagentModelSelectionConfig`
 
-Host settings owner that records Session authorization before the first model request.
+Host settings owner that records Session authorization before the first model request and widens it on approval.
 
 ```ts cordis-catalog
 /**
  * Register an operator-owned route source through the caller's effect lifecycle.
- * Sources cannot change an existing Session policy and are sampled only when enabled is null.
+ * Sources are sampled only when a fresh Session starts and enabled is null; they never alter a recorded policy.
  * @param source - Callback returning authorized routes, or undefined when absent; failures reject Agent creation.
  * @returns Idempotent disposer that withdraws this registration.
  */
 registerAllowedModelsSource(source: AllowedModelsSource): () => void
+
+/**
+ * Widen one running Session's authorized routes after a person confirms them, as one operation.
+ * Order is fixed: ask, persist, append. A decline, an absent answer, a `persist` rejection, or an
+ * abort appends nothing. Widening is monotone: the Session keeps every route it had and gains `routes`.
+ * A Session without a policy keeps its parent route. Authorization is never derived from file contents, so
+ * editing preferences outside this method grants nothing to a running Session.
+ * @param agent - running Agent whose Session is widened.
+ * @param routes - exact routes the Session should be allowed to select.
+ * @param steps - host-owned ask and persist steps and the routes still to be saved.
+ * @param signal - cancellation for the whole operation.
+ * @returns `unchanged` when the Session already allows every route and `unsaved` is empty (persist still runs without a proof),
+ *   `widened` with the new revision after an appended entry, or `declined` when no proof was given.
+ * @throws when routes need confirmation while the operator setting is `enabled: false`, when a Session without a policy
+ *   has no parent route, when
+ *   the proof does not cover the missing routes, or when `persist` or the signal rejects.
+ */
+async widenSession<Saved>( agent: Agent, routes: readonly AllowedModelRoute[], steps: WidenSessionSteps<Saved>, signal: AbortSignal, ): Promise<WidenSessionOutcome<Saved>>
 ```
+
+Types: [Agent](core.md)
 
 Source: [`packages/subagent/tool-subagent/src/model-selection-settings.ts`](../../packages/subagent/tool-subagent/src/model-selection-settings.ts)
 

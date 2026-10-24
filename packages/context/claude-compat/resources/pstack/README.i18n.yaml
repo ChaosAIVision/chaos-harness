@@ -1,0 +1,19 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/context/claude-compat/resources/pstack/README.md
+/pstack:
+  en: 8525b10695d12115
+  zh: e21205e85fd8d7c2
+/pstack/what-it-contains:
+  en: d2e10e3bb9d4c508
+  zh: b6f0ea27ba8fe1e5
+/pstack/data-handling:
+  en: a662efedd7afc0bc
+  zh: 98da2ec6435be354
+/pstack/links:
+  en: 3bede16b9ca592af
+  zh: 6f3cab0cab542ee6
+/pstack/license:
+  en: 22d59869955e0dc2
+  zh: e811bcd19f5452a0
