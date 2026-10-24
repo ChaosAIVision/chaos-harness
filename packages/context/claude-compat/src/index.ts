@@ -132,12 +132,14 @@ export interface CompatHost {
    * @param signal - cancellation of provisioning, not settlement.
    * @returns activation and model-visible isolation or degradation description.
    */
-  readonly isolateWorktree?: (
+  readonly isolateWorktree?: ((
     parent: Agent,
     cwd: string | undefined,
     start: (cwd: string) => ReturnType<CompatHost['startActivation']>,
     signal: AbortSignal,
-  ) => Promise<{ activation: Awaited<ReturnType<CompatHost['startActivation']>>; description: string }>
+  ) => Promise<{ activation: Awaited<ReturnType<CompatHost['startActivation']>>; description: string }>) | undefined
+  /** Watch service addition, removal, and replacement; the host owns listener disposal. */
+  readonly onWorktreeChange?: (refresh: () => void) => void
   /** LLM catalog, when the host mounts one. */
   readonly llm: (Pick<LlmRuntime, 'resolveCallConfig' | 'resolveModelInfo'> & Partial<Pick<LlmRuntime, 'listProviders' | 'listModels'>>) | undefined
   /** Recorded Session authorization; omission restricts explicit selection to the parent route. */
@@ -315,7 +317,7 @@ export function install(host: CompatHost, config: Config): void {
       return `  - ${agent.type}${pinned}${effort}${summary}`
     }).join('\n')
 
-  host.registerTool(defineTool({
+  const registerAgentTool = () => host.registerTool(defineTool({
     name: 'claude_agent',
     description: [
       'Delegate any pstack Agent call: named agents and general-purpose tasks or panel members.',
@@ -438,14 +440,20 @@ export function install(host: CompatHost, config: Config): void {
         signal: exec.signal,
         delivery: 'parent',
       })
-      const isolated = args.isolation === 'worktree' && host.isolateWorktree !== undefined
-        ? await host.isolateWorktree(parent, args.cwd, cwd => start(cwd), exec.signal)
-        : undefined
+      const isolate = args.isolation === 'worktree' ? host.isolateWorktree : undefined
+      if (args.isolation !== undefined && isolate === undefined) throw new Error('claude_agent worktree isolation requires the worktree service')
+      const isolated = isolate === undefined ? undefined : await isolate(parent, args.cwd, cwd => start(cwd), exec.signal)
       const started = isolated?.activation ?? await start(args.cwd)
       const routeLabel = agentOptions?.provider === undefined ? 'parent route' : `${agentOptions.provider}/${agentOptions.model}`
       return `Started ${agent.type} as subagent ${started.childId} on ${routeLabel}. Its result arrives as a message.${isolated === undefined ? '' : ` ${isolated.description}`}`
     },
   }))
+
+  let unregisterAgentTool = registerAgentTool()
+  host.onWorktreeChange?.(() => {
+    unregisterAgentTool()
+    unregisterAgentTool = registerAgentTool()
+  })
 
   host.registerTool(defineTool({
     name: 'claude_agent_models',
@@ -626,36 +634,39 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     return answer?.selected.length === 1 && answer.selected[0] === 'Authorize routes' && answer.custom === undefined
       ? mintHumanApproval(routes) : undefined
   }
-  const worktrees: WorktreeService | undefined = ctx.get('worktrees')
   const settlements = new Map<Agent, Set<Promise<unknown>>>()
   ctx.on('agent/turn-stopping', async ({ agent }) => {
     const pending = settlements.get(agent)
     if (pending !== undefined) await Promise.all(pending)
   })
+  const isolateWorktree: NonNullable<CompatHost['isolateWorktree']> = async (parent, cwd, start, signal) => {
+    const worktrees: WorktreeService | undefined = ctx.get('worktrees')
+    if (worktrees === undefined) throw new Error('claude_agent worktree isolation requires the worktree service')
+    const isolated = await worktrees.isolate(parent, cwd === undefined ? {} : { cwd }, start, (report) => {
+      parent.followup(createUserMessage({
+        content: [{ type: 'text', text: `Worktree kept (${report.reason}): path=${report.path} branch=${report.branch} base=${report.baseCommit} head=${report.headCommit} uncommitted=${report.uncommitted}` }],
+        source: { kind: 'worktree-kept' },
+      }))
+    }, signal)
+    const pending = settlements.get(parent) ?? new Set<Promise<unknown>>()
+    settlements.set(parent, pending)
+    pending.add(isolated.settled)
+    void isolated.settled.then(() => {
+      pending.delete(isolated.settled)
+      if (pending.size === 0) settlements.delete(parent)
+    })
+    const location = isolated.isolation
+    return {
+      activation: isolated.activation,
+      description: location.kind === 'worktree'
+        ? `Worktree isolation: cwd=${location.cwd} branch=${location.branch} base=${location.baseLabel} (${location.baseCommit}).`
+        : `Worktree isolation unavailable: ${location.reason}. Running in ${location.cwd}.`,
+    }
+  }
   install({
-    ...worktrees === undefined ? {} : {
-      isolateWorktree: async (parent, cwd, start, signal) => {
-        const isolated = await worktrees.isolate(parent, cwd === undefined ? {} : { cwd }, start, (report) => {
-          parent.followup(createUserMessage({
-            content: [{ type: 'text', text: `Worktree kept (${report.reason}): path=${report.path} branch=${report.branch} base=${report.baseCommit} head=${report.headCommit} uncommitted=${report.uncommitted}` }],
-            source: { kind: 'worktree-kept' },
-          }))
-        }, signal)
-        const pending = settlements.get(parent) ?? new Set<Promise<unknown>>()
-        settlements.set(parent, pending)
-        pending.add(isolated.settled)
-        void isolated.settled.then(() => {
-          pending.delete(isolated.settled)
-          if (pending.size === 0) settlements.delete(parent)
-        })
-        const location = isolated.isolation
-        return {
-          activation: isolated.activation,
-          description: location.kind === 'worktree'
-            ? `Worktree isolation: cwd=${location.cwd} branch=${location.branch} base=${location.baseLabel} (${location.baseCommit}).`
-            : `Worktree isolation unavailable: ${location.reason}. Running in ${location.cwd}.`,
-        }
-      },
+    get isolateWorktree() { return ctx.get('worktrees') === undefined ? undefined : isolateWorktree },
+    onWorktreeChange: (refresh) => {
+      ctx.on('internal/service', (name) => { if (name === 'worktrees') refresh() })
     },
     modelSelectionPolicy: (parent) => {
       const current = sessionPolicy(policy, parent.session)
