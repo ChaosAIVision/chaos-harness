@@ -78,3 +78,7 @@
       config:
         root: !!js process.env.DSH_SNAPSHOT_SPILL_ROOT
         locatorRoot: !!js process.env.DSH_SNAPSHOT_SPILL_LOCATOR_ROOT
+
+# Skills are disabled; omit the skill-dependent pstack compatibility plugin.
+- id: claude-compat
+  disabled: true

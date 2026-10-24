@@ -54,3 +54,7 @@
 - insert:
     - id: pending-confinement-fixture
       name: '../../../packages/shell/bash-sandbox/tests/fixtures/pending-confinement.ts'
+
+# Reserve the refusing sandbox provider for the command under test.
+- id: claude-compat
+  disabled: true
