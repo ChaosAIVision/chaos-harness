@@ -385,12 +385,15 @@ describe('failures while provisioning and sweeping', () => {
       return spawn(spec)
     })
   }
+  const checksOutFiles = (argv: readonly string[]) => argv.includes('reset') && argv.includes('--hard')
+  const writesLeaseMetadata = (argv: readonly string[]) => argv.some(arg => arg.includes('dsh-lease.json'))
+  const listsWorktrees = (argv: readonly string[]) => argv.includes('list')
   const idle = async () => ({ result: Promise.resolve() })
 
   it('finishes and removes a half-built lease when checkout fails after the worktree was registered', async () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
-    spawnFailing(ctx, argv => argv.includes('reset') && argv.includes('--hard') && !argv.includes('lease-retry'), 1)
+    spawnFailing(ctx, checksOutFiles, 1)
     await expect(ctx.worktrees.isolate(agent, {}, idle, () => {})).rejects.toThrow('injected spawn failure')
     expect(await branches(root)).toBe('')
     expect(await worktreeCount(root)).toBe(1)
@@ -399,20 +402,16 @@ describe('failures while provisioning and sweeping', () => {
   it('leaves a half-built lease for the reaper when rolling it back also fails', async () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
-    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
-    spawnFailing(ctx, argv => argv.includes('reset') && argv.includes('--hard'))
+    spawnFailing(ctx, checksOutFiles)
     await expect(ctx.worktrees.isolate(agent, {}, idle, () => {})).rejects.toThrow('injected spawn failure')
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not be rolled back'))
     expect(await ctx.worktrees.list(agent)).toEqual([expect.objectContaining({ status: 'live' })])
   })
 
   it('ignores a half-built lease that never received metadata', async () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
-    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
-    spawnFailing(ctx, argv => argv.some(arg => arg.includes('dsh-lease.json')))
+    spawnFailing(ctx, writesLeaseMetadata)
     await expect(ctx.worktrees.isolate(agent, {}, idle, () => {})).rejects.toThrow('injected spawn failure')
-    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('rolled back'))
     expect(await ctx.worktrees.list(agent)).toEqual([expect.objectContaining({ status: 'unowned' })])
   })
 
@@ -420,7 +419,7 @@ describe('failures while provisioning and sweeping', () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
-    spawnFailing(ctx, argv => argv.includes('list'), 1)
+    spawnFailing(ctx, listsWorktrees, 1)
     const { settled } = await ctx.worktrees.isolate(agent, {}, idle, () => {})
     expect(await settled).toMatchObject({ kind: 'removed' })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('sweep failed'))

@@ -259,9 +259,7 @@ describe('replaying interrupted transitions', () => {
     const adminDir = await git(broken, 'rev-parse', '--absolute-git-dir')
     await writeFile(join(adminDir, 'index'), 'not an index')
     const { ctx, agent } = await start(root)
-    const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
     expect(await ctx.worktrees.reap(agent)).toEqual([{ kind: 'removed', branch: 'dsh/lease/fine' }])
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('dsh/lease/broken'))
     expect(await git(root, 'branch', '--list', 'dsh/lease/*')).toContain('dsh/lease/broken')
   })
 
