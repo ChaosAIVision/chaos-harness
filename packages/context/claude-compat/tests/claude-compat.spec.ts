@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { mintHumanApproval } from '@deepseek-ai/dsh-tool-subagent'
-import { Config as ConfigSchema, install, loadPstackPreferences, pstackConfigPath } from '@deepseek-ai/dsh-claude-compat'
+import { Config as ConfigSchema, install, loadPstackPreferences, pstackConfigPath, savePstackPreferences } from '@deepseek-ai/dsh-claude-compat'
 import type { CompatHost, Config } from '@deepseek-ai/dsh-claude-compat'
 
 interface Activation {
@@ -472,6 +472,30 @@ describe('pstack setup approval', () => {
     await expect(tools.get('claude_agent_setup')!.execute({ preferences_json: JSON.stringify({ allowedModels: [{ provider: 'evil', model: 'x' }] }) }, exec as never)).rejects.toThrow('operator-owned')
     expect(widen).not.toHaveBeenCalled()
     expect(loadPstackPreferences()?.allowedModels).toEqual([])
+  })
+  it('validates and confirms the exact profile override while keeping saved aliases self-contained', async () => {
+    await savePstackPreferences({ modelAliases: { chosen: { provider: 'alpha', model: 'fast' } } })
+    const widen = widening('yes')
+    const { tools, injected } = await harness({ modelAliases: { chosen: { provider: 'alpha', model: 'judge' } } }, undefined, widen)
+    await tools.get('claude_agent_setup')!.execute({ preferences_json: JSON.stringify({ roles: { review2: 'chosen @high' } }) }, exec as never)
+    expect(widen.mock.calls[0]?.[1]).toEqual([{ provider: 'alpha', model: 'judge' }])
+    expect(loadPstackPreferences().modelAliases.chosen).toEqual({ provider: 'alpha', model: 'fast' })
+    expect(loadPstackPreferences().allowedModels).toEqual([{ provider: 'alpha', model: 'judge' }])
+    expect(injected[0]).toContain('chosen => alpha/judge')
+  })
+  it('rejects efforts unsupported by a profile override before asking for authorization', async () => {
+    await savePstackPreferences({ modelAliases: { chosen: { provider: 'alpha', model: 'judge' } } })
+    const widen = widening('yes')
+    const { tools } = await harness({ modelAliases: { chosen: { provider: 'alpha', model: 'fast' } } }, undefined, widen)
+    await expect(tools.get('claude_agent_setup')!.execute({ preferences_json: JSON.stringify({ roles: { review2: 'chosen @high' } }) }, exec as never)).rejects.toThrow('does not support effort high')
+    expect(widen).not.toHaveBeenCalled()
+  })
+  it('validates default effort against inherited roles even when the file has no aliases or roles', async () => {
+    await writeFile(pstackConfigPath(), JSON.stringify({ ...loadPstackPreferences(), roles: {}, modelAliases: {} }))
+    const widen = widening('yes')
+    const { tools } = await harness({}, undefined, widen)
+    await expect(tools.get('claude_agent_setup')!.execute({ preferences_json: JSON.stringify({ defaultEffort: 'unsupported' }) }, exec as never)).rejects.toThrow('does not support effort unsupported')
+    expect(widen).not.toHaveBeenCalled()
   })
   it('reports the role sheet, default effort, and policy revision in discovery', async () => {
     const widen = widening('yes')

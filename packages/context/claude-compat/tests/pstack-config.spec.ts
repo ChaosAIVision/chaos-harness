@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
@@ -161,6 +162,39 @@ describe('catalog initialization', () => {
     rmSync(pstackConfigPath())
     await initializePstackPreferences(async () => [...catalog].reverse(), profile)
     expect(loadPstackPreferences()).toEqual(first)
+  })
+  it('reserves exact and profile aliases before generating fallbacks and rejects full-hash collisions', async () => {
+    const route = { provider: 'alpha', model: 'auto' }
+    const hash = createHash('sha256').update(JSON.stringify([route.provider, route.model])).digest('hex')
+    const short = `catalog_alpha_auto_${hash.slice(0, 12)}`
+    const full = `catalog_alpha_auto_${hash}`
+    await initializePstackPreferences(async () => [route, { provider: 'beta', model: short }], {})
+    expect(loadPstackPreferences().modelAliases[short]).toEqual({ provider: 'beta', model: short })
+    expect(loadPstackPreferences().modelAliases[full]).toEqual(route)
+    rmSync(pstackConfigPath())
+    await initializePstackPreferences(async () => [route], { [short]: { provider: 'profile', model: 'reserved' } })
+    expect(loadPstackPreferences().modelAliases[full]).toEqual(route)
+    rmSync(pstackConfigPath())
+    await expect(initializePstackPreferences(async () => [route], { [short]: route, [full]: route })).rejects.toThrow('catalog alias collision')
+    expect(() => readFileSync(pstackConfigPath())).toThrow()
+  })
+  it('seeds before direct install can register tools or read context', async () => {
+    const seen: Array<Record<string, { provider: string; model: string }>> = []
+    const host: CompatHost = {
+      registerTool: () => { seen.push(loadPstackPreferences().modelAliases); return () => {} },
+      startActivation: async () => ({ childId: 'child', result: Promise.resolve(undefined) }),
+      mountHooks: () => {}, onAgentCreated: () => {},
+      llm: {
+        listProviders: () => [{ id: 'test', name: 'Test' }],
+        listModels: async () => [{ provider: 'test', id: 'catalog2', name: 'Catalog2' }],
+        resolveCallConfig: async () => ({ provider: 'test', model: 'catalog2', maxTokens: 1024 }),
+        resolveModelInfo: async () => ({ provider: 'test', id: 'catalog2', name: 'Catalog2' }),
+      },
+    }
+    await install(host, { roots: [], models: {}, modelAliases: {}, provider: 'spawn', hooks: false, modelSelection: false })
+    expect(seen).toHaveLength(3)
+    expect(seen.every(aliases => aliases.catalog2?.model === 'catalog2')).toBe(true)
+    expect(loadPstackPreferences().allowedModels).toEqual([])
   })
   it('preserves explicit bytes and deleted aliases without rediscovery', async () => {
     await initializePstackPreferences(async () => catalog, {})
