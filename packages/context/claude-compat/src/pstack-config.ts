@@ -131,6 +131,7 @@ export function loadPstackPreferences(): PstackPreferences {
  * Reject a setup update that touches anything but aliases, roles, and the two controls.
  * Route authorization is not model-editable, so `allowedModels` is refused here, before any question is asked.
  * @param value - parsed JSON the model supplied.
+ * @returns nothing; narrows `value` to an object on success.
  * @throws when the update is not an object, carries other keys, or has non-object aliases or roles.
  */
 export function assertSetupUpdate(value: unknown): asserts value is Record<string, unknown> {

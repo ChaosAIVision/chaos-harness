@@ -115,7 +115,7 @@ describe('claude_agent_setup in a running Session', () => {
     expect(found.aliases).toEqual([expect.objectContaining({ alias: 'fast', allowed: true }), expect.objectContaining({ alias: 'big', allowed: true })])
     expect(found.policyRevision).toBe(2)
     expect(policyEntries(agent).map(event => event.data)).toEqual([
-      { allowedModels: [A], origin: 'session-start', revision: 1 },
+      { allowedModels: [A] },
       { allowedModels: [A, B], origin: 'setup', revision: 2 },
     ])
     const sheets = agent.session.snapshotEvents().flatMap(event => [...JSON.stringify(event).matchAll(/pstack role sheet ([0-9a-f]{8})\./g)]

@@ -109,9 +109,7 @@ export class SubagentModelSelectionConfig extends Service {
         ctx.fiber.assertActive()
         allowedModels = current.enabled ? current.allowedModels : undefined
       }
-      if (allowedModels !== undefined) {
-        target.append('subagent/model-selection-policy', { allowedModels, origin: 'session-start', revision: 1 })
-      }
+      if (allowedModels !== undefined) target.append('subagent/model-selection-policy', { allowedModels })
     })
     this.policyHandle = await policyReady
   }

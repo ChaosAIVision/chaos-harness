@@ -105,7 +105,7 @@ describe('SubagentModelSelectionConfig.widenSession', () => {
     expect(await blocked(ctx, agent, C)).toBe(true)
     expect(sessionPolicy(policy, agent.session)).toEqual({ revision: 2, routes: [A, B] })
     expect(entries(agent).map(event => event.data)).toEqual([
-      { allowedModels: [A], origin: 'session-start', revision: 1 },
+      { allowedModels: [A] },
       { allowedModels: [A, B], origin: 'setup', revision: 2 },
     ])
   })
@@ -278,7 +278,7 @@ describe('SubagentModelSelectionConfig.widenSession', () => {
     ])
 
     expect(results.map(result => result.kind)).toEqual(['widened', 'widened'])
-    expect(entries(agent).map(event => event.data.revision)).toEqual([1, 2, 3])
+    expect(entries(agent).map(event => event.data.revision ?? 1)).toEqual([1, 2, 3])
     expect(sessionPolicy(policy, agent.session)?.routes).toEqual([A, B, C])
   })
 })
