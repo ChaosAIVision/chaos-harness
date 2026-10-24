@@ -189,6 +189,63 @@ it('persists setup and loads named and generic authorized routes from two unrela
   }
 }, 90_000)
 
+for (const authorize of [true, false]) {
+  it(`uses one Loader Session for discovery, ${authorize ? 'approved' : 'declined'} setup, and exact child dispatch`, async () => {
+    const f = await fixture(authorize, 'src')
+    try {
+      const filename = join(f.home, 'pstack', 'config.json')
+      mkdirSync(join(f.home, 'pstack'), { recursive: true })
+      const A = { provider: 'global-parent', model: 'parent-model' }
+      const B = { provider: 'global-review', model: 'review-model' }
+      const initial = { version: 1, modelAliases: { initial: A, unused: { provider: 'global-blocked', model: 'review-model' } },
+        roles: { 'feature, refactoring': 'initial' }, allowedModels: [A], defaultEffort: 'session', sessionHook: true }
+      writeFileSync(filename, JSON.stringify(initial))
+      let step = 0
+      f.respond((wire) => {
+        if (!JSON.stringify(wire.body.messages).includes('SINGLE_SESSION_SETUP')) return [{ type: 'text', text: 'SINGLE_SESSION_CHILD_RESULT' }]
+        step += 1
+        if (step === 1) return [{ type: 'tool_use', id: 'before-discovery', name: 'claude_agent_models', input: {} }]
+        if (step === 2) return [{ type: 'tool_use', id: 'single-setup', name: 'claude_agent_setup', input: { preferences_json: JSON.stringify({ modelAliases: { selected: B }, roles: { 'feature, refactoring': 'selected' } }) } }]
+        if (step === 3) return [{ type: 'tool_use', id: 'after-discovery', name: 'claude_agent_models', input: {} }]
+        if (step === 4) return [{ type: 'tool_use', id: 'single-dispatch', name: 'claude_agent', input: {
+          subagent_type: 'pstack:poteto-agent', description: 'Selected code writer', prompt: 'SINGLE_SESSION_CHILD_TASK', model: 'selected',
+        } }]
+        return [{ type: 'text', text: 'Single Session checked.' }]
+      })
+      await f.launch(f.directories[0]!, 'SINGLE_SESSION_SETUP')
+      const questions = readFileSync(join(f.home, 'approval.jsonl'), 'utf8')
+      assert.ok(questions.includes('global-review/review-model'))
+      assert.ok(!questions.includes('global-blocked') && !questions.includes('global-parent/parent-model'))
+      const saved = JSON.parse(readFileSync(filename, 'utf8')) as typeof initial
+      const logs = sessionLogs(f.home)
+      const parents = logs.filter(log => log.includes('SINGLE_SESSION_SETUP'))
+      assert.equal(parents.length, 1, 'setup and dispatch must share one parent Session')
+      const events = parents[0]!.trim().split('\n').map(line => JSON.parse(line) as { type?: string; data?: Record<string, unknown> })
+      const policies = events.filter(event => event.type === 'subagent/model-selection-policy')
+      const children = f.requests.filter(wire => wire.route === 'global-review')
+      if (authorize) {
+        assert.deepEqual(saved.allowedModels, [A, B])
+        assert.equal(policies.length, 2)
+        assert.equal(policies[1]?.data?.revision, 2)
+        assert.deepEqual(policies[1]?.data?.allowedModels, [A, B])
+        assert.ok(children.some(wire => wire.body.model === 'review-model' && JSON.stringify(wire.body.messages).includes('SINGLE_SESSION_CHILD_TASK')))
+        const parentMessages = f.requests.filter(wire => wire.route === 'global-parent').map(wire => JSON.stringify(wire.body.messages))
+        assert.ok(parentMessages.slice(2).some(messages => messages.includes('feature, refactoring: selected')))
+        const digests = new Set([...parents[0]!.matchAll(/pstack role sheet ([0-9a-f]{8})\./g)].map(match => match[1]))
+        assert.equal(digests.size, 2, 'successful setup must publish a different role sheet')
+      } else {
+        assert.deepEqual(saved, initial)
+        assert.equal(policies.length, 1)
+        assert.equal(children.length, 0)
+        assert.ok(parents[0]!.includes('not authorized by the user'))
+      }
+      assert.ok(!f.requests.some(wire => wire.route === 'global-blocked'))
+    } finally {
+      await f.close()
+    }
+  }, 45_000)
+}
+
 it('discovers and dispatches aliases written after installation without reloading the running profile', async () => {
   const f = await fixture()
   try {
@@ -326,10 +383,11 @@ for (const mode of ['src', 'lib'] as const) {
       assert.equal(named.length, 14)
       for (const name of named) assert.ok(firstWire.includes(`pstack:${name}`), `missing named agent ${name}`)
       assert.ok(firstWire.includes('general-purpose'), 'generic agent missing')
-      const saved = JSON.parse(readFileSync(filename, 'utf8')) as { root?: string; roles: Record<string, string>; allowedModels: unknown[]; modelAliases: unknown }
+      const saved = JSON.parse(readFileSync(filename, 'utf8')) as { root?: string; roles: Record<string, string>; allowedModels: unknown[]; modelAliases: Record<string, { provider: string; model: string }> }
       assert.deepEqual(saved.roles, inheritedRoles)
       assert.deepEqual(saved.allowedModels, [])
-      assert.deepEqual(saved.modelAliases, {})
+      assert.deepEqual(saved.modelAliases['parent-model'], { provider: 'global-parent', model: 'parent-model' })
+      assert.ok(Object.values(saved.modelAliases).some(route => route.provider === 'global-review' && route.model === 'review-model'))
       assert.equal(saved.root, undefined, 'automatic preferences must follow bundled resources rather than pin an external installation')
       assert.ok(!existsSync(f.agentsHome), 'boot must not depend on an external installation')
       const before = readFileSync(filename, 'utf8')
@@ -349,7 +407,7 @@ for (const mode of ['src', 'lib'] as const) {
       const approved = JSON.parse(readFileSync(filename, 'utf8')) as typeof saved
       assert.equal(approved.root, saved.root)
       assert.deepEqual(approved.roles, { ...inheritedRoles, 'feature, refactoring': 'review' })
-      assert.deepEqual(approved.modelAliases, { review: { provider: 'global-review', model: 'review-model' } })
+      assert.deepEqual(approved.modelAliases, { ...saved.modelAliases, review: { provider: 'global-review', model: 'review-model' } })
       assert.deepEqual(approved.allowedModels, [{ provider: 'global-review', model: 'review-model' }])
       assert.ok(readFileSync(join(f.home, 'approval.jsonl'), 'utf8').includes('global-review/review-model'), 'setup did not request direct user approval')
       const configured = readFileSync(filename, 'utf8')

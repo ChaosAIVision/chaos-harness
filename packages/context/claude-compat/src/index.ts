@@ -41,7 +41,7 @@ import * as filesystemSkills from '@deepseek-ai/dsh-skill-filesystem'
 import { bundledPstackRoot } from './pstack-resources.ts'
 export { bundledPstackRoot } from './pstack-resources.ts'
 import { parse as parseYaml } from 'yaml'
-import { assertSetupUpdate, loadPstackPreferences, savePstackPreferences } from './pstack-config.ts'
+import { initializePstackPreferences, loadPstackPreferences, preparePstackUpdate } from './pstack-config.ts'
 import { contextMessage, loadRoleSheet, renderRoleSheet } from './role-sheet.ts'
 import type { RoleChoices, RoleSheet } from './role-sheet.ts'
 export { loadPstackPreferences, parsePstackPreferences, pstackConfigPath, savePstackPreferences } from './pstack-config.ts'
@@ -151,7 +151,7 @@ export interface CompatHost {
    */
   readonly widenSession?: (
     exec: Parameters<ToolDefinition['execute']>[1],
-    routes: Array<{ provider: string; model: string }>,
+    routes: readonly { provider: string; model: string }[],
     steps: Omit<WidenSessionSteps<string>, 'ask'>,
   ) => Promise<WidenSessionOutcome<string>>
   /** Queue model-facing context for an Agent's next step without waking it. */
@@ -241,6 +241,13 @@ function parseEffort(value: unknown, source: string): string {
   return value
 }
 
+async function catalogRoutes(llm: CompatHost['llm']): Promise<Array<{ provider: string; model: string }>> {
+  if (llm?.listProviders === undefined || llm.listModels === undefined) return []
+  const listModels = llm.listModels.bind(llm)
+  return (await Promise.all(llm.listProviders().map(async provider =>
+    (await listModels(provider.id)).map(model => ({ provider: provider.id, model: model.id }))))).flat()
+}
+
 const withoutConfirmation: NonNullable<CompatHost['widenSession']> = async (_exec, _routes, steps) =>
   steps.unsaved.length === 0
     ? { kind: 'unchanged', revision: undefined, saved: await steps.persist(undefined) }
@@ -250,8 +257,10 @@ const withoutConfirmation: NonNullable<CompatHost['widenSession']> = async (_exe
  * Install the compatibility tool and hook bridges on any host.
  * @param host - tool registry, subagent dispatch, LLM catalog, and hook mounting.
  * @param config - plugin roots, dispatch provider, routes, and hook toggle.
+ * @returns when preferences are initialized and tools and hooks are installed.
  */
-export function install(host: CompatHost, config: Config): void {
+export async function install(host: CompatHost, config: Config): Promise<void> {
+  if (config.pstack === undefined) await initializePstackPreferences(() => catalogRoutes(host.llm), config.modelAliases)
   const widen = host.widenSession ?? withoutConfirmation
   const preferences = config.pstack === undefined ? loadPstackPreferences() : undefined
   const modelAliases = () => ({
@@ -267,16 +276,17 @@ export function install(host: CompatHost, config: Config): void {
   const byType = new Map(agents.map(agent => [agent.type, agent]))
   const adaptation = [
     'For every pstack Agent call, generic or named, use claude_agent, not the standard subagent tool.',
-    'Use general-purpose (or omit subagent_type) for generic panel members; model aliases resolve identically for all types.',
+    'Code-writing delegates in pstack playbooks use subagent_type: pstack:poteto-agent. Generic exploration and review panels keep the type their routed skill specifies; use general-purpose (or omit subagent_type) only for generic panel members. Model aliases resolve identically for all types.',
     'Dispatch is asynchronous; run_in_background: true is accepted. Map SendMessage to send_message(agent_id, message); TaskStop to interrupt_agent(agent_id) (requests interruption, does not await exit); TaskOutput to list_agents for status, with completion delivered automatically as a message.',
     'Load skills with the skill tool using the exact catalog name; when the catalog uses bare names, pstack:poteto-mode means poteto-mode.',
     'For setup-pstack, available model names are the current configured aliases plus auto and inherit-parent. Use claude_agent_models to discover each alias route, Session authorization, and exact-model reasoning efforts (plus the inherited route). Never infer an effort is supported from its name.',
+    'Native setup-pstack steps 1 through 7: (1) discover the current catalog and saved choices with claude_agent_models; (2) ask the user which models to use; (3) map each selected exact provider/model to an alias and role; (4) ask whether the session hook stays on; (5) check live efforts from discovery; (6) save the selected edits with claude_agent_setup using preferences_json and complete any host route confirmation; (7) use the automatically injected fresh role sheet. Never edit model sheets or AGENTS.md for native setup.',
     'Effort-agent declarations apply their effort to the selected model, including auto and inherit-parent. Unsupported efforts fail explicitly.',
     'Pass model as a configured alias without provider; auto or inherit-parent inherits the parent model. reasoning_effort can change only its effort.',
     'Strip @effort from each saved role or panel entry and pass reasoning_effort separately (or select the declared effort agent). Entries without a suffix use default effort; absent default or session passes reasoning_effort: session to preserve the parent effort, overriding alias defaults. Never collapse panel entries, including inherited entries.',
     'Aliases name routes, not authorization: explicit selections require the recorded Session policy, or the parent route when no policy is recorded.',
     'Explicit type and wildcard routes are authoritative when modelSelection is off; conflicting model choices fail rather than being ignored.',
-    'Model aliases, roles, and routes can change during this session. A later "pstack role sheet" message supersedes every earlier sheet and alias list; claude_agent_models returns the current aliases, roles, default effort, policyRevision, and sheetDigest and is authoritative.',
+    'Model aliases, roles, and routes can change during this session. A later "pstack role sheet" message supersedes every earlier sheet and alias list; claude_agent_models returns the current aliases, roles, default effort, sessionHook, policyRevision, and sheetDigest and is authoritative.',
   ].join('\n')
   const pstackRoot = config.pstack === undefined
     ? preferences?.root ?? bundledPstackRoot() : absoluteFrom(config.pstack.root, process.cwd())
@@ -468,6 +478,7 @@ export function install(host: CompatHost, config: Config): void {
           catalog: { type: 'array', items: { type: 'object', additionalProperties: true } },
           roles: { type: 'object', additionalProperties: true },
           defaultEffort: { type: 'string' },
+          sessionHook: { type: 'boolean' },
           policyRevision: { type: 'number' },
           sheetDigest: { type: 'string' },
         },
@@ -503,10 +514,11 @@ export function install(host: CompatHost, config: Config): void {
           provider: provider.id,
           models: (await listModels(provider.id)).map(model => ({ id: model.id, name: model.name })),
         })))
-      const { sheet, choices } = currentSheet()
+      const { sheet, choices, hookOff } = currentSheet()
       return {
         catalog,
         roles: choices.roles,
+        sessionHook: !hookOff,
         ...choices.defaultEffort === undefined ? {} : { defaultEffort: choices.defaultEffort },
         ...policy?.revision === undefined ? {} : { policyRevision: policy.revision },
         sheetDigest: sheet.digest,
@@ -526,35 +538,26 @@ export function install(host: CompatHost, config: Config): void {
 
   if (preferences !== undefined) host.registerTool(defineTool({
     name: 'claude_agent_setup',
-    description: 'Save home-scoped pstack aliases and role choices after asking the user which models to use. Discover provider/model ids with claude_agent_models first. Routes this Session or the saved preferences do not yet authorize need a separate direct human confirmation through the host question service; unavailable or declined confirmation saves nothing. After a confirmed save the new aliases, roles, and routes apply to this Session immediately and a fresh role sheet is injected; aliases that need no new route take effect on the next discovery or dispatch. Child sessions started earlier and other open Sessions keep the authorization they already have.',
+    description: 'Save home-scoped pstack aliases and role choices after asking the user which models to use. Discover provider/model ids with claude_agent_models first. Only explicitly upserted aliases and explicitly patched role choices select routes, using profile overrides. Control-only edits select none. Unused catalog aliases grant nothing. Remove aliases with removeModelAliases; update every referring role in the same edit. Selected routes this Session or the saved preferences do not yet authorize need a separate direct human confirmation through the host question service; unavailable or declined confirmation saves nothing. After a confirmed save the new aliases, roles, and routes apply to this Session immediately and a fresh role sheet is injected; aliases that need no new route take effect on the next discovery or dispatch. Child sessions started earlier and other open Sessions keep the authorization they already have.',
     parameters: {
-      preferences_json: { type: 'string', required: true, description: 'JSON object with modelAliases (alias -> {provider,model,reasoningEffort?}) and roles (role -> alias or comma-separated alias@effort entries). Optional defaultEffort and sessionHook controls are accepted; do not supply allowedModels.' },
+      preferences_json: { type: 'string', required: true, description: 'JSON object with modelAliases (alias -> {provider,model,reasoningEffort?}) and roles (role -> alias or comma-separated alias@effort entries). Optional removeModelAliases (distinct alias names), defaultEffort and sessionHook are accepted. Removals cannot overlap upserts or leave role references; historical grants remain. Do not supply allowedModels.' },
     },
     output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
     async execute(args, exec) {
-      const value: unknown = JSON.parse(args.preferences_json)
-      assertSetupUpdate(value)
-      // Resolve every selected model and effort before publishing preferences.
-      const { parsePstackPreferences } = await import('./pstack-config.ts')
-      const current = loadPstackPreferences()
-      const updates = value
-      const validated = parsePstackPreferences({ ...current, ...updates,
-        modelAliases: { ...current.modelAliases, ...typeof updates.modelAliases === 'object' && updates.modelAliases !== null && !Array.isArray(updates.modelAliases) ? updates.modelAliases : {} },
-        roles: { ...current.roles, ...typeof updates.roles === 'object' && updates.roles !== null && !Array.isArray(updates.roles) ? updates.roles : {} },
-      })
+      const update = preparePstackUpdate(JSON.parse(args.preferences_json), config.modelAliases)
       if (host.llm === undefined) throw new Error('pstack setup requires the LLM catalog')
-      for (const route of Object.values(validated.modelAliases)) {
+      for (const route of update.aliasUpserts) {
         await host.llm.resolveCallConfig({ provider: route.provider, model: route.model,
           ...route.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(route.reasoningEffort) } }, exec.signal)
       }
-      for (const choice of Object.values(validated.roles)) {
+      for (const choice of Object.values(update.effectiveRoles)) {
         for (const entry of choice.split(',')) {
           const [alias, suffix] = entry.split('@').map(part => part.trim())
-          const route = alias === undefined ? undefined : validated.modelAliases[alias]
+          const route = alias === undefined ? undefined : update.effectiveAliases[alias]
           const inherited = exec.agent === undefined ? undefined : parentAgentOptionsForDelegation(exec.agent)
           const provider = route?.provider ?? inherited?.provider
           const model = route?.model ?? inherited?.model
-          const effort = suffix ?? validated.defaultEffort
+          const effort = suffix ?? update.defaultEffort
           if (provider === undefined || model === undefined) throw new Error('setup requires an effective parent route')
           const info = await host.llm.resolveModelInfo(provider, model, exec.signal)
           if (effort !== undefined && effort !== 'session' && !(info.reasoning?.efforts ?? []).some(item => String(item.id) === effort)) {
@@ -562,19 +565,11 @@ export function install(host: CompatHost, config: Config): void {
           }
         }
       }
-      const routes: Array<{ provider: string; model: string }> = []
-      for (const route of Object.values(validated.modelAliases)) {
-        if (!routes.some(item => item.provider === route.provider && item.model === route.model)) {
-          routes.push({ provider: route.provider, model: route.model })
-        }
-      }
-      const unsaved = routes.filter(route => !current.allowedModels.some(item =>
-        item.provider === route.provider && item.model === route.model))
       const parent = exec.agent
       if (parent === undefined) throw new Error('claude_agent_setup requires a calling agent')
-      const outcome = await widen(exec, routes, {
-        unsaved,
-        persist: approval => Promise.resolve(savePstackPreferences(value, approval)),
+      const outcome = await widen(exec, update.selectedRoutes, {
+        unsaved: update.unsavedRoutes,
+        persist: update.persist,
       })
       if (outcome.kind === 'declined') {
         throw new Error('Pstack model setup was not authorized by the user; no preferences were saved')
@@ -609,6 +604,7 @@ export function install(host: CompatHost, config: Config): void {
  * @returns when the Session policy projection and compatibility tools are installed.
  */
 export async function apply(ctx: Context, config: Config): Promise<void> {
+  if (config.pstack === undefined) await initializePstackPreferences(() => catalogRoutes(ctx.get('llm')), config.modelAliases)
   const preferences = config.pstack === undefined ? loadPstackPreferences() : undefined
   const root = config.pstack === undefined ? preferences?.root ?? bundledPstackRoot() : absoluteFrom(config.pstack.root, process.cwd())
   await ctx.plugin(filesystemSkills, {
@@ -662,7 +658,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         : `Worktree isolation unavailable: ${location.reason}. Running in ${location.cwd}.`,
     }
   }
-  install({
+  await install({
     get isolateWorktree() { return ctx.get('worktrees') === undefined ? undefined : isolateWorktree },
     onWorktreeChange: (refresh) => {
       ctx.on('internal/service', (name) => { if (name === 'worktrees') refresh() })
