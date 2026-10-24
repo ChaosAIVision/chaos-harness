@@ -84,9 +84,12 @@ export interface TerminalTransport {
  * Cookies stay inside the selected origin and mount. Every socket generation readmits.
  * @param connectUrl - authenticated URL received privately or from an explicit file.
  * @param signal - complete terminal lifetime.
+ * @param admissionTimeoutMs - configured timeout for each credential exchange.
  * @returns transport with initial admission completed.
  */
-export async function createTerminalTransport(connectUrl: string, signal: AbortSignal): Promise<TerminalTransport> {
+export async function createTerminalTransport(
+  connectUrl: string, signal: AbortSignal, admissionTimeoutMs: number,
+): Promise<TerminalTransport> {
   let url: URL
   try { url = new URL(connectUrl) } catch { throw new Error(t.url) }
   const tokens = url.searchParams.getAll('token')
@@ -107,7 +110,7 @@ export async function createTerminalTransport(connectUrl: string, signal: AbortS
     if (pending !== undefined) return pending
     if (!fresh && cookie !== undefined) return Promise.resolve(cookie)
     pending = (async () => {
-      const response = await fetch(exchange, { redirect: 'manual', signal })
+      const response = await fetch(exchange, { redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(admissionTimeoutMs)]) })
       const cookies = response.headers.getSetCookie()
       const issued = cookies.filter(value => /^dsh-auth-[A-Za-z0-9_-]+=/.test(value))
       const issuedCookie = issued[0]

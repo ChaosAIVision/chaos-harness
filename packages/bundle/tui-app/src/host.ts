@@ -50,6 +50,7 @@ export async function startTerminalHost(
     return { connectUrl: await readConnectUrl(launch.host.connectUrlFile), lost: new AbortController().signal, stop: async () => {} }
   }
   const entry = process.argv[1]
+  if (entry === undefined) throw new Error(t.launch)
   const directory = await mkdtemp(join(tmpdir(), 'dsh-tui-'))
   let child: ChildProcess | undefined
   let stopped: Promise<void> | undefined

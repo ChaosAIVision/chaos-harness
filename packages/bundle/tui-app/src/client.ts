@@ -17,9 +17,12 @@ import type { TerminalLaunch } from './launch-types.ts'
  * @param connectUrl - private authenticated Web Host URL.
  * @param launch - accepted terminal navigation inputs.
  * @param signal - process and owned Host lifetime.
+ * @param admissionTimeoutMs - configured timeout for each credential exchange.
  */
-export async function run(connectUrl: string, launch: TerminalLaunch, signal: AbortSignal): Promise<void> {
-  const transport = await createTerminalTransport(connectUrl, signal)
+export async function run(
+  connectUrl: string, launch: TerminalLaunch, signal: AbortSignal, admissionTimeoutMs: number,
+): Promise<void> {
+  const transport = await createTerminalTransport(connectUrl, signal, admissionTimeoutMs)
   const client = new Context()
   try {
     installConnection(client, {

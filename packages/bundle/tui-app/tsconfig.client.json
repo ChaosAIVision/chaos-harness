@@ -10,9 +10,6 @@
       "client-assets"
     ]
   },
-  "files": [
-    "src/client.ts"
-  ],
   "references": [
     {
       "path": "../../../vendor/cordis"
@@ -44,5 +41,14 @@
     {
       "path": "../../api/terminal-controller/tsconfig.client.json"
     }
+  ],
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/index.ts",
+    "src/startup.ts",
+    "src/host.ts",
+    "src/host-bridge.ts"
   ]
 }

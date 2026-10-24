@@ -59,7 +59,7 @@ describe('Node terminal transport', () => {
   it('uses the same interactive cookie for HTTP and WebSocket, then readmits after loss', async () => {
     const fixture = await server()
     const controller = new AbortController()
-    const transport = await createTerminalTransport(`${fixture.base}?token=private`, controller.signal)
+    const transport = await createTerminalTransport(`${fixture.base}?token=private`, controller.signal, 1000)
     expect(fixture.admissions).toEqual(['?token=private&interactions=answer'])
     expect(await (await transport.fetch('api/commands.list', {})).text()).toBe('accepted')
     const socket = transport.createWebSocket(fixture.base.replace('http:', 'ws:') + 'api/remote.mux')
@@ -84,7 +84,7 @@ describe('Node terminal transport', () => {
 
   it('never forwards cookies outside the selected origin or mount', async () => {
     const fixture = await server()
-    const transport = await createTerminalTransport(`${fixture.base}?token=private`, new AbortController().signal)
+    const transport = await createTerminalTransport(`${fixture.base}?token=private`, new AbortController().signal, 1000)
     await expect(transport.fetch('http://127.0.0.1:1/mount/api', {})).rejects.toThrow('authenticated Host')
     await expect(transport.fetch('../outside', {})).rejects.toThrow('authenticated Host')
     expect(() => transport.createWebSocket('ws://127.0.0.1:1/mount/api')).toThrow('authenticated Host')
@@ -92,8 +92,8 @@ describe('Node terminal transport', () => {
   })
 
   it('rejects malformed authentication without exposing the supplied URL', async () => {
-    await expect(createTerminalTransport('file:///secret?token=hidden', new AbortController().signal)).rejects.toThrow('HTTP(S)')
-    await expect(createTerminalTransport('https://user:secret@example.test/?token=hidden', new AbortController().signal)).rejects.toThrow('HTTP(S)')
-    await expect(createTerminalTransport('http://127.0.0.1/?token=one&token=two', new AbortController().signal)).rejects.toThrow('HTTP(S)')
+    await expect(createTerminalTransport('file:///secret?token=hidden', new AbortController().signal, 1000)).rejects.toThrow('HTTP(S)')
+    await expect(createTerminalTransport('https://user:secret@example.test/?token=hidden', new AbortController().signal, 1000)).rejects.toThrow('HTTP(S)')
+    await expect(createTerminalTransport('http://127.0.0.1/?token=one&token=two', new AbortController().signal, 1000)).rejects.toThrow('HTTP(S)')
   })
 })

@@ -10,5 +10,5 @@ export interface TerminalLaunch {
 
 /** Private Node Client entry, loaded after the Host launcher has parsed its flags. */
 export interface TerminalClientEntry {
-  run(connectUrl: string, launch: TerminalLaunch, signal: AbortSignal): Promise<void>
+  run(connectUrl: string, launch: TerminalLaunch, signal: AbortSignal, admissionTimeoutMs: number): Promise<void>
 }

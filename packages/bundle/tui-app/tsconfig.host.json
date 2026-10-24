@@ -6,7 +6,12 @@
     "tsBuildInfoFile": "lib/tsconfig.host.tsbuildinfo"
   },
   "files": [
-    "src/index.ts"
+    "src/index.ts",
+    "src/startup.ts",
+    "src/host.ts",
+    "src/host-bridge.ts",
+    "src/launch-types.ts",
+    "src/runtime-copy.ts"
   ],
   "references": [
     {

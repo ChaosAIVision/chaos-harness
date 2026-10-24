@@ -29,7 +29,7 @@ async function run(launch: TerminalLaunch, config: Config, signal: AbortSignal):
   try {
     const clientUrl = new URL(import.meta.url.endsWith('.ts') ? './client.ts' : './client.js', import.meta.url).href
     const client = await import(clientUrl) as TerminalClientEntry
-    await client.run(host.connectUrl, launch, AbortSignal.any([signal, host.lost]))
+    await client.run(host.connectUrl, launch, AbortSignal.any([signal, host.lost]), config.startupTimeoutMs)
     if (host.lost.aborted && !signal.aborted) throw new Error(t.ended)
   } finally {
     await host.stop()
