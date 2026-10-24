@@ -438,10 +438,11 @@ registerAllowedModelsSource(source: AllowedModelsSource): () => void
  * @param signal - cancellation for the whole operation.
  * @returns `unchanged` when the Session already allows every route and `unsaved` is empty (persist still runs without a proof),
  *   `widened` with the new revision after an appended entry, or `declined` when no proof was given.
- * @throws when the operator setting is `enabled: false`, when a Session without a policy has no parent route, when
+ * @throws when routes need confirmation while the operator setting is `enabled: false`, when a Session without a policy
+ *   has no parent route, when
  *   the proof does not cover the missing routes, or when `persist` or the signal rejects.
  */
-async widenSession( agent: Agent, routes: readonly AllowedModelRoute[], steps: WidenSessionSteps, signal: AbortSignal, ): Promise<WidenSessionOutcome>
+async widenSession<Saved>( agent: Agent, routes: readonly AllowedModelRoute[], steps: WidenSessionSteps<Saved>, signal: AbortSignal, ): Promise<WidenSessionOutcome<Saved>>
 ```
 
 Types: [Agent](core.md)
