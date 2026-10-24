@@ -23,10 +23,10 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "locale/*.json",
     "lib/index.js",
-    "lib/types/**/*.d.ts",
     "resources/pstack/**",
-    "locale/*.json"
+    "lib/types/**/*.d.ts"
   ],
   "license": "MIT",
   "dependencies": {

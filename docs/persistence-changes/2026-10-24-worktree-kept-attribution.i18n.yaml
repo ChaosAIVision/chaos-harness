@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-24-worktree-kept-attribution.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-24-worktree-kept-attribution.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-24-worktree-kept-attribution:
+  en: 2168dba30a0e1dff
+  zh: 23d695ef5d51b32d
+/2026-10-24-worktree-kept-attribution/summary:
+  en: fab0cd99be2b595d
+  zh: 60cc7bcabe603b97
+/2026-10-24-worktree-kept-attribution/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-24-worktree-kept-attribution/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-24-worktree-kept-attribution/compatibility:
+  en: b3d7dfbc62683752
+  zh: 438e2f0425789913
+/2026-10-24-worktree-kept-attribution/verification:
+  en: c597a01e26394202
+  zh: 99ea81f465beb6a5
+/2026-10-24-worktree-kept-attribution/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269
