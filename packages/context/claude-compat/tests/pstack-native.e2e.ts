@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
+import { scanZstdFrames } from '../../../session/session-persistence-jsonl/src/zstd.ts'
 import { startMockLlmServer } from '../../../test-support/llm-mock-server/src/index.ts'
 
 const temporary = mkdtempSync(join(tmpdir(), 'pstack-native-e2e-'))
@@ -70,15 +71,23 @@ try {
       sessionId: 'sessionId' in value && typeof value.sessionId === 'string' ? value.sessionId : undefined,
     }
   })
-  const parentId = events.find(event => event.type === 'session')?.sessionId
-  assert.ok(parentId)
+  const ids = new Set(events.filter(event => event.type === 'session').map(event => event.sessionId).filter(id => id !== undefined))
   const sessionsRoot = join(process.env.DSH_HOME ?? join(process.env.HOME ?? '', '.dsh'), 'sessions')
-  const workspace = readdirSync(sessionsRoot).find(directory => existsSync(join(sessionsRoot, directory, parentId)))
-  assert.ok(workspace, 'parent session workspace not found')
-  const sessions = join(sessionsRoot, workspace, parentId)
-  const logFile = readdirSync(sessions).find(file => file.endsWith('.jsonl.zstd'))
-  assert.ok(logFile, 'no durable parent session')
-  const log = zstdDecompressSync(readFileSync(join(sessions, logFile))).toString()
+  const logs = readdirSync(sessionsRoot).flatMap(workspace =>
+    [...ids].flatMap((id) => {
+      const directory = join(sessionsRoot, workspace, id)
+      if (!existsSync(directory)) return []
+      const file = readdirSync(directory).find(name => name.endsWith('.jsonl.zstd'))
+      if (file === undefined) return []
+      const bytes = readFileSync(join(directory, file))
+      const frames = scanZstdFrames(bytes).frames.map(({ start, end }) => zstdDecompressSync(bytes.subarray(start, end)))
+      const log = Buffer.concat(frames).toString()
+      const header: unknown = JSON.parse(log.split('\n')[0]!)
+      return typeof header === 'object' && header !== null && !('parentSession' in header) ? [log] : []
+    }),
+  )
+  assert.equal(logs.length, 1, 'expected one top-level durable session')
+  const log = logs[0]!
   assert.ok(log.includes('NATIVE-MANDATE-PROBE') && log.includes('feature, refactoring: fast'), 'context not durable')
   console.log(JSON.stringify({
     ok: true, firstRequestContext: true, durableContext: true,

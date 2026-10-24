@@ -9,11 +9,13 @@ import { git, harness, repository, testAgent } from './harness.ts'
 
 let ctx: Context | undefined
 const roots: string[] = []
+const activations: Array<() => void> = []
 const children: Array<{ kill: (signal: NodeJS.Signals) => boolean }> = []
 
 afterEach(async () => {
   vi.restoreAllMocks()
   for (const child of children.splice(0)) child.kill('SIGKILL')
+  for (const finish of activations.splice(0)) finish()
   await ctx?.fiber.dispose()
   ctx = undefined
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
@@ -66,7 +68,11 @@ async function crashable(root: string, mode: 'clean' | 'dirty', session: string)
 }
 
 const finished = async () => ({ result: Promise.resolve() })
-const hanging = async () => ({ result: new Promise<undefined>(() => {}) })
+const hanging = async () => {
+  const result = Promise.withResolvers<undefined>()
+  activations.push(() => { result.resolve(undefined) })
+  return { result: result.promise }
+}
 
 async function start(root: string, session = 'reaper') {
   ctx = await harness(root)
