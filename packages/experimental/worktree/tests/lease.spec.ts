@@ -490,12 +490,25 @@ describe('settlement races and refusals', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('inbox closed'))
   })
 
+  it('keeps a lease whose checkout link the delegate deleted, because Git refuses to remove it', async () => {
+    const root = await repo()
+    const { ctx, agent } = await start(root)
+    const kept: KeptReport[] = []
+    const isolated = await ctx.worktrees.isolate(agent, {}, async (cwd) => {
+      await rm(join(cwd, '.git'))
+      return { result: Promise.resolve(), dispose: async () => {} }
+    }, report => kept.push(report))
+    expect(await isolated.settled).toMatchObject({ kind: 'kept', reason: 'removal-refused' })
+    expect(kept).toHaveLength(1)
+    expect(await branches(root)).toContain((isolated.isolation as { branch: string }).branch)
+  })
+
   it('reports an unsettled lease through the log and leaves it for a later sweep', async () => {
     const root = await repo()
     const { ctx, agent } = await start(root)
     const warn = vi.spyOn(ctx.logger, 'warn').mockImplementation(() => {})
     const isolated = await ctx.worktrees.isolate(agent, {}, async (cwd) => {
-      await rm(join(cwd, '.git'))
+      await rm(join(await git(cwd, 'rev-parse', '--git-common-dir'), 'worktrees', cwd.split('/').at(-1)!, 'gitdir'))
       return { result: Promise.resolve(), dispose: async () => {} }
     }, () => {})
     expect(await isolated.settled).toBeUndefined()

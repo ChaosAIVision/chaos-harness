@@ -1,7 +1,7 @@
 /** Creates Git worktrees: retained and entered on request, or leased to a delegate and settled when it stops. */
 
 import { randomUUID } from 'node:crypto'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -56,6 +56,7 @@ interface WorktreeSpec {
 }
 
 type CommandResult = Awaited<ReturnType<typeof runCommand>>
+type ConfigReader = (args: string[], allowedExitCodes: number[]) => Promise<CommandResult>
 
 /** Commands bound to one sandbox policy, working directory, and cancellation signal. */
 interface GitContext {
@@ -220,9 +221,9 @@ export class WorktreeService extends Service {
       try {
         const checkout = await this.checkout(git, { branch, revision: base.commit }, async (path) => {
           added = path
-          await this.writeLease(git, path, file)
+          await this.writeLease(git, root, path, file)
         })
-        await this.writeLease(git, checkout.path, { ...file, state: 'held' })
+        await this.writeLease(git, root, checkout.path, { ...file, state: 'held' })
         return checkout
       } catch (error) {
         if (added !== undefined) await this.abandon(git, root, added, branch)
@@ -349,7 +350,7 @@ export class WorktreeService extends Service {
       await git.node(repositoryRoot, PREPARE_DIRECTORY, poolPath, path)
       await run(repositoryRoot, ['--work-tree', repositoryRoot, 'worktree', 'add', '--no-checkout', '-b', branch, '--', path, baseCommit])
       await onAdded?.(path)
-      await run(path, ['--work-tree', path, 'reset', '--hard', '--no-recurse-submodules', baseCommit], undefined, await this.filterOverrides(git, path))
+      await run(path, ['--work-tree', path, 'reset', '--hard', '--no-recurse-submodules', baseCommit], undefined, await this.filterOverrides((args, allowed) => run(path, args, allowed)))
       return { path: this.ctx.fs.processPath(await this.ctx.fs.resolve(path, { signal })), branch, baseCommit, repositoryRoot }
     } catch (error) {
       throw incomplete(branch, path, error)
@@ -357,8 +358,8 @@ export class WorktreeService extends Service {
   }
 
   /** Environment overrides that disable every configured clean, smudge, process, and required filter driver. */
-  private async filterOverrides(git: GitContext, path: string): Promise<NodeJS.ProcessEnv> {
-    const configured = await git.git(path, ['config', '--null', '--name-only', '--get-regexp', '^filter\\.'], [0, 1])
+  private async filterOverrides(configure: ConfigReader): Promise<NodeJS.ProcessEnv> {
+    const configured = await configure(['config', '--null', '--name-only', '--get-regexp', '^filter\\.'], [0, 1])
     const drivers = new Set<string>()
     for (const key of configured.stdout.split('\0')) {
       const separator = key.lastIndexOf('.')
@@ -376,6 +377,10 @@ export class WorktreeService extends Service {
       }
     }
     return overrides
+  }
+
+  private leaseFilterOverrides(git: GitContext, lease: LeaseRef): Promise<NodeJS.ProcessEnv> {
+    return this.filterOverrides((args, allowed) => this.inLease(git, lease, args, allowed))
   }
 
   /** Serialize provisioning and sweeps so a sweep never sees a branch whose worktree Git has not registered yet. */
@@ -409,17 +414,37 @@ export class WorktreeService extends Service {
     return { commit: head, label: 'HEAD (no origin/HEAD)' }
   }
 
-  private async writeLease(git: GitContext, path: string, file: LeaseFile): Promise<void> {
-    const adminDir = await this.adminDirectory(git, path)
-    await git.node(path, WRITE_FILE, join(adminDir, LEASE_FILE), JSON.stringify(file))
+  private async writeLease(git: GitContext, root: string, path: string, file: LeaseFile): Promise<void> {
+    const adminDir = await this.adminDirectory(git, root, path)
+    await git.node(root, WRITE_FILE, join(adminDir, LEASE_FILE), JSON.stringify(file))
   }
 
-  private async adminDirectory(git: GitContext, path: string): Promise<string> {
-    return (await git.git(path, ['rev-parse', '--absolute-git-dir'])).stdout.trim()
+  /**
+   * Find the admin directory Git registered for a checkout. Only the repository's own `worktrees/<id>/gitdir`
+   * records are trusted, never the `.git` pointer inside the checkout, which the delegate can rewrite.
+   */
+  private async adminDirectory(git: GitContext, root: string, path: string): Promise<string> {
+    const common = (await git.git(root, ['rev-parse', '--git-common-dir'])).stdout.trim()
+    const registry = join(this.ctx.fs.processPath(await this.ctx.fs.resolve(common, { cwd: root, signal: git.signal })), 'worktrees')
+    const target = await this.ctx.fs.resolve(path, { signal: git.signal })
+    for (const entry of await this.ctx.fs.listDir(await this.ctx.fs.resolve(registry, { signal: git.signal }), git.signal)) {
+      const adminDir = join(registry, entry.name)
+      const record = await this.ctx.fs.lstat(join(adminDir, 'gitdir'), undefined, git.signal)
+      if (record === undefined) continue
+      const text = await this.ctx.fs.readText(await this.ctx.fs.resolve(join(adminDir, 'gitdir'), { signal: git.signal }), git.signal)
+      const linked = await this.ctx.fs.resolve(dirname(text.trim()), { cwd: adminDir, signal: git.signal })
+      if (this.ctx.fs.processPath(linked) === this.ctx.fs.processPath(target)) return adminDir
+    }
+    throw new Error(`no registered worktree administration directory for ${path}`)
   }
 
-  private async readLease(git: GitContext, path: string, branch: string): Promise<{ adminDir: string; file: LeaseFile | undefined }> {
-    const adminDir = await this.adminDirectory(git, path)
+  private async readLease(
+    git: GitContext,
+    root: string,
+    path: string,
+    branch: string,
+  ): Promise<{ adminDir: string; file: LeaseFile | undefined }> {
+    const adminDir = await this.adminDirectory(git, root, path)
     const location = join(adminDir, LEASE_FILE)
     if (await this.ctx.fs.lstat(location, undefined, git.signal) === undefined) return { adminDir, file: undefined }
     const parsed = parseLeaseFile(await this.ctx.fs.readText(await this.ctx.fs.resolve(location, { signal: git.signal }), git.signal))
@@ -440,7 +465,7 @@ export class WorktreeService extends Service {
         leases.push({ path: entry.path, branch: entry.branch, status: 'missing' as const, file: undefined, adminDir: undefined })
         continue
       }
-      const { adminDir, file } = await this.readLease(git, entry.path, entry.branch).catch(
+      const { adminDir, file } = await this.readLease(git, root, entry.path, entry.branch).catch(
         () => ({ adminDir: undefined, file: undefined }),
       )
       const alive = file !== undefined && file.state !== 'kept' && file.ownerHost === HOST
@@ -458,12 +483,25 @@ export class WorktreeService extends Service {
     return { leases, orphans }
   }
 
-  private async inspect(git: GitContext, path: string, branch: string, env: NodeJS.ProcessEnv): Promise<Inspection> {
-    const status = await git.git(path, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching'], undefined, env)
-    const stash = await git.git(path, ['reflog', 'show', '--format=%gs', 'refs/stash'], [0, 128])
-    const head = await git.git(path, ['rev-parse', '--verify', '-q', 'HEAD'], [0, 1])
-    const symbolic = await git.git(path, ['symbolic-ref', '-q', 'HEAD'], [0, 1])
-    const tip = await git.git(path, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`], [0, 1])
+  /** Run Git against a lease checkout through its registered admin directory, not the checkout's own `.git` pointer. */
+  private inLease(
+    git: GitContext,
+    lease: LeaseRef,
+    args: string[],
+    allowedExitCodes?: number[],
+    env?: NodeJS.ProcessEnv,
+  ): Promise<CommandResult> {
+    return git.git(lease.path, ['--git-dir', lease.adminDir, '--work-tree', lease.path, ...args], allowedExitCodes, env)
+  }
+
+  private async inspect(git: GitContext, lease: LeaseRef, env: NodeJS.ProcessEnv): Promise<Inspection> {
+    const { branch } = lease
+    const run = (args: string[], allowed?: number[], extra?: NodeJS.ProcessEnv) => this.inLease(git, lease, args, allowed, extra)
+    const status = await run(['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching'], undefined, env)
+    const stash = await run(['reflog', 'show', '--format=%gs', 'refs/stash'], [0, 128])
+    const head = await run(['rev-parse', '--verify', '-q', 'HEAD'], [0, 1])
+    const symbolic = await run(['symbolic-ref', '-q', 'HEAD'], [0, 1])
+    const tip = await run(['rev-parse', '--verify', '-q', `refs/heads/${branch}`], [0, 1])
     return {
       ...parseStatus(status.stdout),
       stashed: stashedFrom(stash.stdout, branch),
@@ -481,14 +519,14 @@ export class WorktreeService extends Service {
   private async settle(git: GitContext, root: string, lease: LeaseRef): Promise<Settlement> {
     const { path, branch } = lease
     const baseCommit = lease.file.baseCommit
-    const env = await this.filterOverrides(git, path)
-    const inspection = await this.inspect(git, path, branch, env)
+    const env = await this.leaseFilterOverrides(git, lease)
+    const inspection = await this.inspect(git, lease, env)
     const decision = decide(inspection, { branch, baseCommit })
     if (decision.action === 'keep') return this.keep(git, lease, inspection, decision.reason)
     await this.persist(git, lease, 'settling')
     const removal = await git.git(root, ['worktree', 'remove', '--', path], [0, 1, 128], env)
     if (removal.exitCode !== 0 && await this.ctx.fs.lstat(path, undefined, git.signal) !== undefined) {
-      const after = await this.inspect(git, path, branch, env)
+      const after = await this.inspect(git, lease, env)
       const changed = decide(after, { branch, baseCommit }).action === 'keep'
       return this.keep(git, lease, after, changed ? 'changed-during-removal' : 'removal-refused')
     }
@@ -505,7 +543,7 @@ export class WorktreeService extends Service {
   }
 
   private async persist(git: GitContext, lease: LeaseRef, state: LeaseFile['state']): Promise<void> {
-    await git.node(lease.path, WRITE_FILE, join(lease.adminDir, LEASE_FILE), JSON.stringify({ ...lease.file, state }))
+    await git.node(git.cwd, WRITE_FILE, join(lease.adminDir, LEASE_FILE), JSON.stringify({ ...lease.file, state }))
   }
 
   /** Compare-and-delete: Git deletes the ref only while it still has the expected value. */
@@ -523,7 +561,7 @@ export class WorktreeService extends Service {
   ): Promise<Settlement | undefined> {
     try {
       const git = this.bind(policy, root, new AbortController().signal)
-      const { adminDir, file } = await this.readLease(git, path, branch)
+      const { adminDir, file } = await this.readLease(git, root, path, branch)
       if (file === undefined) throw new Error('lease metadata is missing')
       const settlement = await this.settle(git, root, { path, branch, adminDir, file })
       if (settlement.kind === 'kept') this.deliver(onKept, settlement)
@@ -547,7 +585,7 @@ export class WorktreeService extends Service {
   private async abandon(git: GitContext, root: string, path: string, branch: string): Promise<void> {
     try {
       const own = this.bind(git.policy, root, new AbortController().signal)
-      const { adminDir, file } = await this.readLease(own, path, branch)
+      const { adminDir, file } = await this.readLease(own, root, path, branch)
       if (file === undefined) return
       if (file.state === 'provisioning') await this.completeCheckout(own, { path, branch, adminDir, file })
       await this.settle(own, root, { path, branch, adminDir, file })
@@ -558,8 +596,8 @@ export class WorktreeService extends Service {
 
   /** Finish the checkout of a lease that crashed while provisioning. No delegate ever ran in it. */
   private async completeCheckout(git: GitContext, lease: LeaseRef): Promise<void> {
-    const env = await this.filterOverrides(git, lease.path)
-    await git.git(lease.path, ['--work-tree', lease.path, 'reset', '--hard', '--no-recurse-submodules', lease.file.baseCommit], undefined, env)
+    const env = await this.leaseFilterOverrides(git, lease)
+    await this.inLease(git, lease, ['reset', '--hard', '--no-recurse-submodules', lease.file.baseCommit], undefined, env)
   }
 
   private async sweep(git: GitContext, root: string): Promise<Array<{ settlement: Settlement; ownerSession: string | undefined }>> {
