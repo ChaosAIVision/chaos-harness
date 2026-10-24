@@ -114,6 +114,104 @@ describe('SubagentModelSelectionConfig', () => {
     await ctx.fiber.dispose()
   })
 
+  it('records trusted source routes only for fresh Sessions and withdraws them with their effect', async () => {
+    const ctx = await boot()
+    let routes = ALLOWED_MODELS
+    const source = await ctx.plugin((sourceCtx: Context) => {
+      sourceCtx.effect(() => ctx.subagentModelSelection.registerAllowedModelsSource(async () => routes))
+    })
+    const parent = await createAgent(ctx, 'source-parent')
+    const policy = await ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
+    expect(subagentModelSelectionPolicy(policy, parent.session)).toEqual(ALLOWED_MODELS)
+    expect(parent.session.snapshotEvents().filter(event => event.type === 'subagent/model-selection-policy'))
+      .toHaveLength(1)
+
+    routes = [{ provider: 'beta', model: 'new-model' }]
+    expect(await capturePolicy(ctx)).toEqual(routes)
+    expect(subagentModelSelectionPolicy(policy, parent.session)).toEqual(ALLOWED_MODELS)
+    const child = await createAgent(ctx, 'source-child', {
+      meta: { parentSession: parent.id, origin: 'subagent' },
+    })
+    expect(subagentModelSelectionPolicy(policy, child.session)).toEqual(ALLOWED_MODELS)
+    const resumed = await createAgent(ctx, 'source-resumed', { seed: [] })
+    expect(subagentModelSelectionPolicy(policy, resumed.session)).toBeUndefined()
+    await source.dispose()
+    expect(await capturePolicy(ctx)).toBeUndefined()
+    await ctx.fiber.dispose()
+  })
+
+  it('samples a source registered by preset setup before publishing the first Agent', async () => {
+    const ctx = await boot()
+    const preset = modelSelectionPresets.get(ctx)!
+    const handle = await ctx.agents.create({
+      sessionId: SessionId('preset-source-first-agent'),
+      setup: (agentCtx) => {
+        bindScopeParent(scopeOf(agentCtx)!, scopeOf(preset.ctx)!)
+        preset.ctx.effect(() => ctx.subagentModelSelection.registerAllowedModelsSource(async () => ALLOWED_MODELS))
+      },
+    })
+    const policy = await ctx.sessionProjections.register(subagentModelSelectionProjectionDefinition)
+    expect(subagentModelSelectionPolicy(policy, handle.agent.session)).toEqual(ALLOWED_MODELS)
+    expect(handle.agent.session.snapshotEvents().filter(event => event.type === 'subagent/model-selection-policy'))
+      .toHaveLength(1)
+    await ctx.fiber.dispose()
+  })
+
+  it('uses explicit settings as the authoritative allowlist instead of registered sources', async () => {
+    const ctx = await boot()
+    const extra = { provider: 'beta', model: 'extra' }
+    const release = ctx.subagentModelSelection.registerAllowedModelsSource(() => [...ALLOWED_MODELS, extra])
+    await selectionConfigs.get(ctx)!.update({ enabled: true, allowedModels: ALLOWED_MODELS })
+    expect(await capturePolicy(ctx)).toEqual(ALLOWED_MODELS)
+    const agent = await createAgent(ctx, 'explicit-settings-exclude-source')
+    const result = await executeToolFixture(ctx, {
+      signal: new AbortController().signal,
+      callId: ToolCallId('source-excluded-by-settings'),
+      name: 'subagent',
+      arguments: { description: 'excluded source route', prompt: 'work', ...extra },
+      agent,
+    })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('is not allowed for this Session')
+    await selectionConfigs.get(ctx)!.update({ enabled: false })
+    expect(await capturePolicy(ctx)).toBeUndefined()
+    await selectionConfigs.get(ctx)!.update({ enabled: null })
+    expect(await capturePolicy(ctx)).toEqual([...ALLOWED_MODELS, extra])
+    release()
+    release()
+    expect(await capturePolicy(ctx)).toBeUndefined()
+    await ctx.fiber.dispose()
+  })
+
+  it('leaves absent or empty sources inert and propagates invalid source data and read failures', async () => {
+    const ctx = await boot()
+    ctx.subagentModelSelection.registerAllowedModelsSource(() => undefined)
+    ctx.subagentModelSelection.registerAllowedModelsSource(() => [])
+    expect(await capturePolicy(ctx)).toBeUndefined()
+    const releaseInvalid = ctx.subagentModelSelection.registerAllowedModelsSource(() => [...ALLOWED_MODELS, ...ALLOWED_MODELS])
+    await expect(capturePolicy(ctx)).rejects.toThrow('repeats route')
+    releaseInvalid()
+    ctx.subagentModelSelection.registerAllowedModelsSource(async () => { throw new Error('malformed pstack config') })
+    await expect(capturePolicy(ctx)).rejects.toThrow('malformed pstack config')
+    await ctx.fiber.dispose()
+  })
+
+  it('never invokes a malformed source when explicit settings enable or disable selection', async () => {
+    const ctx = await boot()
+    const source = vi.fn(() => { throw new Error('malformed persisted source') })
+    ctx.subagentModelSelection.registerAllowedModelsSource(source)
+    await selectionConfigs.get(ctx)!.update({ enabled: false })
+    expect(await capturePolicy(ctx)).toBeUndefined()
+    expect(source).not.toHaveBeenCalled()
+    await selectionConfigs.get(ctx)!.update({ enabled: true, allowedModels: ALLOWED_MODELS })
+    expect(await capturePolicy(ctx)).toEqual(ALLOWED_MODELS)
+    expect(source).not.toHaveBeenCalled()
+    await selectionConfigs.get(ctx)!.update({ allowedModels: [] })
+    await expect(capturePolicy(ctx)).rejects.toThrow('requires at least one allowed model')
+    expect(source).not.toHaveBeenCalled()
+    await ctx.fiber.dispose()
+  })
+
   it('rejects duplicate routes, enabled empty settings, and an empty durable policy', async () => {
     const ctx = ownContext(new Context())
     await mountAgentLoopTestDependencies(ctx, { workingDirectory: true })

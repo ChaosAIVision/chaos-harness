@@ -356,6 +356,9 @@
     - id: command-compact
       name: '@deepseek-ai/dsh-command-compact'
 
+    - id: subagent-model-selection-settings
+      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
+
     - id: subagent
       name: '@deepseek-ai/dsh-subagent'
 

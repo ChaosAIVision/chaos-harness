@@ -123,7 +123,7 @@ matcher subject 是工具名称（`PreToolUse`／`PostToolUse`）或会话源（
 当包级约定不够用时阅读以下页面。它们从共享协议进入桥接设计，以及桥接所面向的扩展点。
 
 - [hooks 组地图](../README.zh.md)——同级组页面及其包表。
-- [hook 协议库](../hook-protocol/README.zh.md)——本桥接应用的共享钩子规则。
+- [hook 协议库](../../context/hook-protocol/README.zh.md)——本桥接应用的共享钩子规则。
 - [钩子桥接 Agent Note](../../../.agents/notes/archived/feature/2026-06-30-hook-bridges.md)——桥接设计、决策映射与延期缺口。
 - [拦截扩展点 参考](../../../docs/tool-execution-pipeline.zh.md)——桥接所映射的类型化 Decision 接口面。
 - [生成的配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-hooks-codex)——每个受支持配置字段及其源声明。

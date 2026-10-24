@@ -13,7 +13,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import AgentPresets from '@deepseek-ai/dsh-agent-preset-registry'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { queueHostSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
@@ -153,6 +153,58 @@ describe('child preset start validation', () => {
 })
 
 describe('continuable child presets', () => {
+  it.each(['separate', 'fork'])('restricts direct child tools at creation and cold resume with %s without changing the parent', async (provider) => {
+    const { ctx, parent, adapter } = await setup()
+    parkParent(ctx, parent)
+    const executed: string[] = []
+    for (const name of ['read', 'edit', 'write', 'bash']) {
+      ctx.tools.register({
+        name, description: name,
+        parameters: { type: 'object', properties: {} },
+        output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+        async execute() { executed.push(name); return name },
+      })
+    }
+    const checked: string[] = []
+    ctx.on('agent/created', async ({ agent }) => {
+      if (agent.session.header.parentSession !== parent.id) return
+      const names = ctx.tools.schemas(agent).map(tool => tool.name)
+      expect(names).toContain('read')
+      expect(names).toContain('bash')
+      expect(names).not.toContain('edit')
+      expect(names).not.toContain('write')
+      const batch = await ctx.tools.execute({
+        agent, signal: new AbortController().signal,
+        calls: ['edit', 'write'].map(name => ({ type: 'tool-call' as const, id: ToolCallId(name), name, arguments: '{}' })),
+      })
+      expect(batch.results.map(outcome => outcome.result.isError)).toEqual([true, true])
+      checked.push(agent.id)
+    })
+    const spec = startSpec(parent, undefined, provider)
+    const filter = { deny: ['edit', 'write'] }
+    const started = await ctx.subagents.startActivation({ ...spec, request: { ...spec.request, toolFilter: filter } })
+    filter.deny.length = 0
+    const stored = await settled(ctx, started.childId)
+    expect(stored.events.find(event => event.type === 'subagent/descriptor')?.data).toMatchObject({
+      toolFilter: { deny: ['edit', 'write'] },
+    })
+    await continueChild(ctx, parent, started.childId)
+    await settled(ctx, started.childId)
+    expect(checked).toEqual([started.childId, started.childId])
+    expect(executed).toEqual([])
+    expect(ctx.tools.schemas(parent).map(tool => tool.name)).toEqual(expect.arrayContaining(['edit', 'write']))
+    const parentBatch = await ctx.tools.execute({
+      agent: parent, signal: new AbortController().signal,
+      calls: ['edit', 'write'].map(name => ({ type: 'tool-call' as const, id: ToolCallId(name), name, arguments: '{}' })),
+    })
+    expect(parentBatch.results.map(outcome => outcome.result.isError)).toEqual([false, false])
+    expect(executed).toEqual(['edit', 'write'])
+    for (const request of adapter.requests) {
+      expect(request.tools?.map(tool => tool.name)).not.toContain('edit')
+      expect(request.tools?.map(tool => tool.name)).not.toContain('write')
+    }
+  })
+
   it('records an independent selection before its descriptor and sends only the selected preset tools', async () => {
     const { ctx, parent, adapter } = await setup()
     parkParent(ctx, parent)

@@ -1,0 +1,10 @@
+version: 1
+scenario: pstack-general-purpose
+profile: headless
+composition: default
+recording: authored
+header:
+  class: pstack-general-purpose
+  pin: true
+  childToolSchemas: [1]
+  childSystemPrompts: [1]

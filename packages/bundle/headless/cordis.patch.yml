@@ -12,6 +12,14 @@
       You are a coding agent powered by the {{model}} model.
 
 - insert:
+    - id: claude-compat
+      name: '@deepseek-ai/dsh-claude-compat'
+      config:
+        roots:
+          - '~/.agents/pstack-plugin'
+        provider: spawn
+        hooks: true
+
     - id: headless-startup
       name: '@deepseek-ai/dsh-headless/startup'
 

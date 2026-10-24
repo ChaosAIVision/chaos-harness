@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Compatibilité avec Claude Code",
+    "description": "Exécutez sur DeepSeek Harness les sous-agents nommés, les routes de modèles par rôle et hooks.json d’un module complémentaire Claude Code."
+  }
+}

@@ -4,12 +4,10 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { zstdDecompressSync } from 'node:zlib'
 import { startMockLlmServer } from '../../../test-support/llm-mock-server/src/index.ts'
 
 const temporary = mkdtempSync(join(tmpdir(), 'pstack-native-e2e-'))
-const plugin = fileURLToPath(new URL('../src/index.ts', import.meta.url))
 const root = join(temporary, 'pstack')
 mkdirSync(join(root, 'agents'), { recursive: true })
 mkdirSync(join(root, 'hooks'), { recursive: true })
@@ -21,17 +19,19 @@ const sheet = join(temporary, 'models.md')
 writeFileSync(sheet, 'feature, refactoring: fast\npanel vendors: any\ndefault effort: session\nsession hook: on\n')
 const overlay = join(temporary, 'overlay.yml')
 writeFileSync(overlay, [
-  '- insert:',
-  '    - id: native-pstack-probe',
-  `      name: ${JSON.stringify(plugin)}`,
-  '      config:',
-  `        roots: [${JSON.stringify(root)}]`,
-  '        provider: spawn',
-  '        hooks: false',
-  '        modelSelection: false',
-  '        modelAliases:',
-  '          fast: { provider: deepseek-official, model: deepseek-v4-flash }',
-  `        pstack: { root: ${JSON.stringify(root)}, sheetPath: ${JSON.stringify(sheet)} }`,
+  '- id: subagent-model-selection-settings',
+  '  config:',
+  '    enabled: true',
+  '    allowedModels: [{ provider: deepseek-official, model: deepseek-v4-flash }]',
+  '- id: claude-compat',
+  '  config:',
+  `    roots: [${JSON.stringify(root)}]`,
+  '    provider: spawn',
+  '    hooks: false',
+  '    modelSelection: false',
+  '    modelAliases:',
+  '      fast: { provider: deepseek-official, model: deepseek-v4-flash }',
+  `    pstack: { root: ${JSON.stringify(root)}, sheetPath: ${JSON.stringify(sheet)} }`,
 ].join('\n'))
 const server = await startMockLlmServer({
   port: 0, apiKey: 'mock-key', sequence: ['tool_call_success', 'success'], repeatLast: true,

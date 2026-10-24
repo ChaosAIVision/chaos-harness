@@ -1015,13 +1015,13 @@
   "packages/experimental/computer-use-cua-driver-native/tests/loader-composition.spec.ts": {
     "2bacab667d9b30188705724df1ae681fd51fb4ebc2668d8e062bfd37d6eb54f1": 1
   },
-  "packages/experimental/hook-protocol/tests/events.spec.ts": {
+  "packages/context/hook-protocol/tests/events.spec.ts": {
     "a59fe57e5f3994018a6bd25208b9c2f56a7bcf7353d6ec2d453564f3f5c225f2": 1
   },
-  "packages/experimental/hooks-claude-code/tests/bridge.spec.ts": {
+  "packages/context/hooks-claude-code/tests/bridge.spec.ts": {
     "38a7cf3dfd5da2f739390f5b233b97731f3bfa1ac3a51fdb8e1594735764bb80": 1
   },
-  "packages/experimental/hooks-claude-code/tests/coverage-cases.ts": {
+  "packages/context/hooks-claude-code/tests/coverage-cases.ts": {
     "38a7cf3dfd5da2f739390f5b233b97731f3bfa1ac3a51fdb8e1594735764bb80": 1,
     "54f541ed10b92b1386306754b4a96741f6d9e40058ddac191f5aed03af30c32a": 1,
     "593ac2fabae51a87153bf285d326f2de6ddb84bf2581f2ac280083b9bc130188": 1

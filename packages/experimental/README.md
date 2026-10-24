@@ -49,8 +49,6 @@ Promotion requires a named product role, documented public behavior and limitati
 | [`terminal-bundle`](terminal-bundle/README.md) | Optional global persistent terminal tools | — |
 | [`badge-skill-bundle`](badge-skill-bundle/README.md) | Optional powered-by-dsh badge skill | — |
 | [`session-titles-bundle`](session-titles-bundle/README.md) | Optional titles following human prompts in a conversation | — |
-| [`hook-protocol`](hook-protocol/README.md) | Hook bridge wire types and durable events | — |
-| [`hooks-claude-code`](hooks-claude-code/README.md) | Claude Code hook bridge | — |
 | [`hooks-codex`](hooks-codex/README.md) | Codex hook bridge | — |
 | [`webhook`](webhook/README.md) | Authenticated delivery dispatch and Workspace Session creation | `ctx.webhookRuntime` |
 | [`webhook-github`](webhook-github/README.md) | Signed GitHub webhook ingress | — |

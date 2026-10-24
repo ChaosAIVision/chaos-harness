@@ -3,13 +3,13 @@ description: "The context group map: request-context plugins that add durable, m
 kind: "package-group"
 ---
 
-# context/ — Request-context plugins
+# context/ — Context and compatibility plugins
 
 English | [中文](README.zh.md)
 
 ## Summary
 
-The context group provides plugins that add model-visible context to each request without defining any tool: workspace instruction files become guidance, `@file` mentions offer path completion, other sessions can be referenced as bounded snapshots, and the model can see the current time and the agent's tmux location. Only `agent-instructions` (`dsh-base`) ships mounted by default; the rest are opt-in. Context is durable: injected instructions and references enter session history as user-role messages, so they persist, replay, and compact like other conversation content. This page maps the group; each package README owns the per-package contract.
+The context group provides request-context plugins and maintained Claude Code compatibility packages. Request-context plugins add model-visible context without defining tools: workspace instruction files become guidance, `@file` mentions offer path completion, other sessions can be referenced as bounded snapshots, and the model can see the current time and the agent's tmux location. `agent-instructions` ships in `dsh-base`; `claude-compat` ships in Web and headless compositions. Other context plugins are opt-in. Context is durable: injected instructions and references enter session history as user-role messages, so they persist, replay, and compact like other conversation content. This page maps the group; each package README owns the per-package contract.
 
 ## Table of Contents
 
@@ -24,6 +24,9 @@ The context group provides plugins that add model-visible context to each reques
 
 | Package | Role | ctx key |
 |---|---|---|
+| [`claude-compat/`](claude-compat/README.md) | Maintained Claude Code plugin compatibility for named subagents, model routes, and hooks | — |
+| [`hooks-claude-code/`](hooks-claude-code/README.md) | Claude Code hook bridge used by compatibility roots | — |
+| [`hook-protocol/`](hook-protocol/README.md) | Shared hook rules, wire types, and durable events | — |
 | [`agent-instructions/`](agent-instructions/README.md) | Loads `AGENTS.md`/`CLAUDE.md` workspace instructions into context and refreshes them after file edits | — |
 | [`session-reference/`](session-reference/README.md) | References other sessions: mention one and its bounded read-only snapshot becomes context | `ctx.sessionReferenceResolver` |
 | [`file-reference/`](file-reference/README.md) | `@file` mention discovery and the shared mention grammar for host-backed UIs | `ctx.fileReferences` |

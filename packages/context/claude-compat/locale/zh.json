@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Claude Code 兼容性",
+    "description": "在 DeepSeek Harness 上运行 Claude Code 插件的具名子代理、按角色配置的模型路由和 hooks.json。"
+  }
+}

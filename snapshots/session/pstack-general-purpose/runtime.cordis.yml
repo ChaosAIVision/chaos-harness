@@ -1,0 +1,4 @@
+- id: claude-compat
+  config:
+    roots: []
+    hooks: false

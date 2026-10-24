@@ -1,0 +1,420 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { Config as ConfigSchema, install, loadPstackPreferences } from '@deepseek-ai/dsh-claude-compat'
+import type { CompatHost, Config } from '@deepseek-ai/dsh-claude-compat'
+
+interface Activation {
+  readonly spec: Parameters<CompatHost['startActivation']>[0]
+}
+
+interface Harness {
+  readonly host: CompatHost
+  readonly activations: Activation[]
+  readonly hooks: Array<{ configPath: string; pluginRoot: string; projectDir?: string; skipSessionStart?: boolean }>
+  readonly contexts: Array<(isChild?: boolean) => string | undefined>
+  readonly tool: Parameters<CompatHost['registerTool']>[0]
+  readonly tools: Map<string, Parameters<CompatHost['registerTool']>[0]>
+}
+
+const AGENT_MARKDOWN = '---\nname: comment-sicko\ndescription: A deranged comment-hater.\n---\n\n# Comment Sicko\n\nMy first output when spawned is exactly this.\n'
+
+function llmStub(): NonNullable<CompatHost['llm']> {
+  return {
+    resolveModelInfo: async (provider, model) => {
+      if (provider !== 'alpha' || !['judge', 'fast'].includes(model)) throw new Error(`unknown model ${provider}/${model}`)
+      return { provider, id: model, name: model, reasoning: { efforts: model === 'judge' ? [{ id: ReasoningEffortId('high'), name: 'High' }] : [] } }
+    },
+    resolveCallConfig: async (selection) => {
+      const { provider, model, reasoningEffort } = selection
+      if (provider !== 'alpha' && provider !== 'beta') throw new Error(`LLM provider "${provider}" is not registered; available: alpha, beta`)
+      if (provider !== 'alpha' || !['judge', 'fast'].includes(model)) throw new Error(`unknown model ${provider}/${model}`)
+      const efforts = model === 'judge' ? ['high'] : []
+      if (reasoningEffort !== undefined && !efforts.includes(reasoningEffort)) throw new Error(`model "${provider}/${model}" has no reasoning effort "${reasoningEffort}"`)
+      return { provider, model, maxTokens: 1024, ...reasoningEffort === undefined ? {} : { reasoningEffort } }
+    },
+  }
+}
+
+function harness(overrides: Partial<Config> = {}, policy?: CompatHost['modelSelectionPolicy'], approveRoutes?: CompatHost['approveRoutes']): Harness {
+  const activations: Activation[] = []
+  const hooks: Harness['hooks'] = []
+  const contexts: Harness['contexts'] = []
+  let tool: Harness['tool'] | undefined
+  const tools: Harness['tools'] = new Map()
+  const host: CompatHost = {
+    registerTool(candidate) {
+      tools.set(candidate.name, candidate)
+      if (candidate.name === 'claude_agent') tool = candidate
+      return () => {}
+    },
+    async startActivation(spec) {
+      activations.push({ spec })
+      return { childId: 'child-1' }
+    },
+    llm: llmStub(),
+    ...approveRoutes === undefined ? {} : { approveRoutes },
+    ...policy === undefined ? {} : { modelSelectionPolicy: policy },
+    onAgentCreated(context) { contexts.push((isChild = false) => context(isChild)) },
+    mountHooks(config) {
+      hooks.push(config)
+    },
+  }
+  install(host, {
+    roots: [],
+    provider: 'spawn',
+    models: {},
+    modelAliases: {},
+    modelSelection: false,
+    hooks: true,
+    ...overrides,
+  })
+  if (tool === undefined) throw new Error('claude_agent was not registered')
+  return { host, activations, hooks, tool, contexts, tools }
+}
+
+const exec = { agent: { id: 'parent', options: { provider: 'alpha', model: 'judge' }, session: { requestHeader: () => undefined } }, signal: new AbortController().signal }
+const task = { description: 'review', prompt: 'Say DONE and stop.' }
+
+let root = ''
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), 'claude-compat-'))
+  vi.stubEnv('DSH_HOME', join(root, 'dsh-home'))
+  vi.stubEnv('DSH_AGENTS_HOME', join(root, 'agents-home'))
+  await mkdir(join(root, 'agents'), { recursive: true })
+  await mkdir(join(root, '.claude-plugin'), { recursive: true })
+  await mkdir(join(root, 'hooks'), { recursive: true })
+  await writeFile(join(root, 'agents', 'comment-sicko.md'), AGENT_MARKDOWN)
+  await writeFile(join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'acme' }))
+  await writeFile(join(root, 'hooks', 'hooks.json'), JSON.stringify({ hooks: {} }))
+})
+afterEach(async () => {
+  vi.unstubAllEnvs()
+  await rm(root, { recursive: true, force: true })
+})
+
+describe('claude-compat discovery', () => {
+  it('leaves native context disabled when configuration omits pstack', () => {
+    expect(ConfigSchema({ roots: [], provider: 'spawn', models: {}, modelAliases: {}, modelSelection: false, hooks: true }).pstack).toBeUndefined()
+  })
+  it('discovers authorized aliases and inherited-model efforts for setup without granting alias routes', async () => {
+    const { tools } = harness({ modelAliases: { opus: { provider: 'alpha', model: 'judge' }, fast: { provider: 'alpha', model: 'fast' } } })
+    const discovery = tools.get('claude_agent_models')
+    const result = await discovery?.execute({}, exec as never)
+    expect(result).toEqual(expect.objectContaining({
+      aliases: [
+        expect.objectContaining({ alias: 'opus', allowed: true, efforts: ['high'] }),
+        expect.objectContaining({ alias: 'fast', allowed: false, efforts: [] }),
+      ],
+      inherited: { provider: 'alpha', model: 'judge', allowed: true, efforts: ['high'] },
+    }))
+  })
+
+  it('keeps healthy aliases and inherited discovery when another alias is stale', async () => {
+    const { tools } = harness({ modelAliases: { good: { provider: 'alpha', model: 'judge' }, stale: { provider: 'alpha', model: 'gone' } } })
+    const result = await tools.get('claude_agent_models')?.execute({}, exec as never)
+    expect(JSON.stringify(result)).toContain('unknown model alpha/gone')
+    expect(JSON.stringify(result)).toContain('"alias":"good"')
+    expect(JSON.stringify(result)).toContain('"inherited"')
+  })
+
+  it('addresses an agent by plugin namespace and advertises every type', () => {
+    const { tool } = harness({ roots: [root] })
+    expect(tool.description).toContain('acme:comment-sicko — A deranged comment-hater.')
+  })
+
+  it('discovers the complete four named plus ten effort-agent installation catalog', async () => {
+    for (const name of ['poteto-agent', 'thermo-nuclear-review-subagent', 'thermo-nuclear-code-quality-review-subagent']) {
+      await writeFile(join(root, 'agents', `${name}.md`), `---\nname: ${name}\n---\nRole ${name}`)
+    }
+    await mkdir(join(root, 'effort-agents'))
+    for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      for (const prefix of ['effort', 'poteto-agent']) {
+        const name = `${prefix}-${level}`
+        await writeFile(join(root, 'effort-agents', `${name}.md`), `---\nname: ${name}\neffort: ${level}\n---\nRole ${name}`)
+      }
+    }
+    const { tool, activations } = harness({ roots: [root] })
+    expect(tool.description.match(/  - acme:/g)).toHaveLength(14)
+    await tool.execute({ ...task, subagent_type: 'acme:poteto-agent-high' }, exec as never)
+    expect(activations[0]?.spec.request.agentOptions).toEqual({ reasoningEffort: 'high' })
+    await expect(tool.execute({ ...task, subagent_type: 'acme:effort-max' }, exec as never)).rejects.toThrow('has no reasoning effort "max"')
+  })
+
+  it('falls back to the directory name when the manifest is absent', async () => {
+    await rm(join(root, '.claude-plugin', 'plugin.json'))
+    const { tool } = harness({ roots: [root] })
+    expect(tool.description).toContain(`${root.split('/').pop()}:comment-sicko`)
+  })
+
+  it('rejects an unknown subagent type with the known list', async () => {
+    const { tool } = harness({ roots: [root] })
+    await expect(tool.execute({ ...task, subagent_type: 'acme:nope' }, exec as never))
+      .rejects.toThrow('unknown subagent type "acme:nope"; available: general-purpose, acme:comment-sicko')
+  })
+})
+
+describe('claude-compat dispatch', () => {
+  it('runs generic panel members through the same alias resolver, including omitted type', async () => {
+    const { tool, activations } = harness({ modelAliases: { opus: { provider: 'alpha', model: 'judge' } } })
+    for (const subagent_type of ['general-purpose', undefined]) {
+      await tool.execute({ ...task, ...subagent_type === undefined ? {} : { subagent_type }, model: 'opus', run_in_background: true }, exec as never)
+    }
+    expect(activations).toHaveLength(2)
+    expect(activations.every(a => a.spec.request.agentOptions?.model === 'judge')).toBe(true)
+  })
+
+  it('discovers effort declarations and applies them to inherited and alias models', async () => {
+    await mkdir(join(root, 'effort-agents'))
+    await writeFile(join(root, 'effort-agents', 'effort-high.md'), '---\nname: effort-high\neffort: high\n---\nDo the task.')
+    const { tool, activations } = harness({ roots: [root] })
+    expect(tool.description).toContain('acme:effort-high')
+    await tool.execute({ ...task, subagent_type: 'acme:effort-high', model: 'inherit-parent' }, exec as never)
+    expect(activations[0]?.spec.request.agentOptions).toEqual({ reasoningEffort: 'high' })
+    await expect(tool.execute({ ...task, subagent_type: 'acme:effort-high', reasoning_effort: 'low' }, exec as never)).rejects.toThrow('conflicting')
+  })
+
+  it('honors a recorded policy for generic and named aliases but denies non-allowlisted routes', async () => {
+    const { tool, activations } = harness({ roots: [root], modelAliases: { fast: { provider: 'alpha', model: 'fast' }, judge: { provider: 'alpha', model: 'judge' } } },
+      () => ({ routes: [{ provider: 'alpha', model: 'fast' }] }))
+    for (const subagent_type of ['general-purpose', 'acme:comment-sicko']) {
+      await tool.execute({ ...task, subagent_type, model: 'fast' }, exec as never)
+      await expect(tool.execute({ ...task, subagent_type, model: 'judge' }, exec as never)).rejects.toThrow('not allowed')
+    }
+    expect(activations).toHaveLength(2)
+  })
+
+  it('rejects unsupported alias effort before dispatch even when route is authorized', async () => {
+    const { tool, activations } = harness({ modelAliases: { bad: { provider: 'alpha', model: 'judge', reasoningEffort: 'max' } } })
+    await expect(tool.execute({ ...task, model: 'bad' }, exec as never)).rejects.toThrow('has no reasoning effort "max"')
+    expect(activations).toEqual([])
+  })
+
+  it('rejects synchronous dispatch rather than ignoring run_in_background false', async () => {
+    const { tool, activations } = harness()
+    await expect(tool.execute({ ...task, run_in_background: false }, exec as never)).rejects.toThrow('starts asynchronously')
+    expect(activations).toEqual([])
+  })
+
+  it('does not authorize another route merely because an operator defined an alias', async () => {
+    const { tool, activations } = harness({ modelAliases: { fast: { provider: 'alpha', model: 'fast' } } })
+    await expect(tool.execute({ ...task, subagent_type: 'general-purpose', model: 'fast' }, exec as never)).rejects.toThrow('not allowed')
+    expect(activations).toEqual([])
+  })
+
+  it('forwards the parent, the declaration, and the task, and inherits the route', async () => {
+    const { tool, activations } = harness({ roots: [root] })
+    const value = await tool.execute({ ...task, subagent_type: 'acme:comment-sicko' }, exec as never)
+    expect(value).toBe('Started acme:comment-sicko as subagent child-1 on parent route. Its result arrives as a message.')
+    const [activation] = activations
+    expect(activation?.spec.provider).toBe('spawn')
+    expect(activation?.spec.delivery).toBe('parent')
+    expect(activation?.spec.request.parent).toBe(exec.agent)
+    expect(activation?.spec.request.agentOptions).toBeUndefined()
+    const text = (activation?.spec.request.prompt[0] as { text: string }).text
+    expect(text).toContain('# Comment Sicko')
+    expect(text).toContain('Say DONE and stop.')
+  })
+
+  it('requests edit/write denial and a no-mutation prompt for readonly generic explorers', async () => {
+    const { tool, activations } = harness()
+    await tool.execute({ ...task, readonly: true }, exec as never)
+    expect(activations[0]?.spec.request.toolFilter).toEqual({ deny: ['edit', 'write'] })
+    const prompt = activations[0]?.spec.request.prompt[0]
+    expect(prompt?.type).toBe('text')
+    if (prompt?.type !== 'text') throw new Error('expected text prompt')
+    expect(prompt.text).toContain('do not modify files or mutate external state')
+    expect(tool.description).toContain('interrupt_agent(agent_id)')
+    expect(tool.description).toContain('list_agents')
+    expect(tool.isConcurrencySafe?.(task)).toBe(true)
+  })
+
+  it('passes the requested child directory through', async () => {
+    const { tool, activations } = harness({ roots: [root] })
+    await tool.execute({ ...task, subagent_type: 'acme:comment-sicko', cwd: '/tmp' }, exec as never)
+    expect(activations[0]?.spec.request.cwd).toBe('/tmp')
+  })
+})
+
+describe('claude-compat routes', () => {
+  it('uses the route configured for the exact type and advertises it', async () => {
+    const { tool, activations } = harness({
+      roots: [root],
+      models: { 'acme:comment-sicko': { provider: 'alpha', model: 'judge' } },
+    })
+    const value = await tool.execute({ ...task, subagent_type: 'acme:comment-sicko' }, exec as never)
+    expect(value).toContain('on alpha/judge')
+    expect(activations[0]?.spec.request.agentOptions).toEqual({ provider: 'alpha', model: 'judge' })
+    expect(tool.description).toContain('[model alpha/judge]')
+  })
+
+  it('falls back to the wildcard route', async () => {
+    const { tool, activations } = harness({
+      roots: [root],
+      models: { '*': { provider: 'alpha', model: 'fast' } },
+    })
+    await tool.execute({ ...task, subagent_type: 'acme:comment-sicko' }, exec as never)
+    expect(activations[0]?.spec.request.agentOptions).toEqual({ provider: 'alpha', model: 'fast' })
+  })
+
+  it('lets a model-supplied route override the configured one', async () => {
+    const { tool, activations } = harness({
+      roots: [root],
+      modelSelection: true,
+      models: { '*': { provider: 'alpha', model: 'fast' } },
+    })
+    const value = await tool.execute({
+      ...task,
+      subagent_type: 'acme:comment-sicko',
+      provider: 'alpha',
+      model: 'judge',
+      reasoning_effort: 'high',
+    }, exec as never)
+    expect(value).toContain('on alpha/judge')
+    expect(activations[0]?.spec.request.agentOptions).toEqual({ provider: 'alpha', model: 'judge', reasoningEffort: 'high' })
+  })
+
+  it('rejects an unregistered provider and an unsupported effort', async () => {
+    const { tool } = harness({ roots: [root], modelSelection: true }, () => ({ routes: [
+      { provider: 'nope', model: 'x' }, { provider: 'alpha', model: 'fast' },
+    ] }))
+    await expect(tool.execute({ ...task, subagent_type: 'acme:comment-sicko', provider: 'nope', model: 'x' }, exec as never))
+      .rejects.toThrow('LLM provider "nope" is not registered; available: alpha, beta')
+    await expect(tool.execute({
+      ...task, subagent_type: 'acme:comment-sicko', provider: 'alpha', model: 'fast', reasoning_effort: 'high',
+    }, exec as never)).rejects.toThrow('model "alpha/fast" has no reasoning effort "high"')
+  })
+
+  it('resolves model-only aliases, advertises them, and preserves configured effort', async () => {
+    const { tool, activations } = harness({
+      roots: [root],
+      modelAliases: { opus: { provider: 'alpha', model: 'judge', reasoningEffort: 'high' } },
+    })
+    await tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model: 'opus' }, exec as never)
+    expect(activations[0]?.spec.request.agentOptions).toEqual({ provider: 'alpha', model: 'judge', reasoningEffort: 'high' })
+    expect(tool.description).toContain('opus => alpha/judge @high')
+  })
+
+  it.each(['auto', 'inherit-parent'])('omits child options for %s', async (model) => {
+    const { tool, activations } = harness({ roots: [root] })
+    await tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model }, exec as never)
+    expect(activations[0]?.spec.request).not.toHaveProperty('agentOptions')
+  })
+
+  it('rejects conflicting aliases instead of silently ignoring the choice', async () => {
+    const { tool, activations } = harness({
+      roots: [root],
+      models: { '*': { provider: 'alpha', model: 'fast' } },
+      modelAliases: { opus: { provider: 'alpha', model: 'judge' } },
+    })
+    await expect(tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model: 'opus' }, exec as never)).rejects.toThrow('configured route')
+    expect(activations).toEqual([])
+  })
+
+  it.each(['judge', 'fast'])('preserves parent effort over alias default for session on %s', async (model) => {
+    const { tool, activations } = harness({ modelAliases: { choice: { provider: 'alpha', model, reasoningEffort: 'max' } } },
+      () => ({ routes: [{ provider: 'alpha', model }] }))
+    const sessionExec = { ...exec, agent: { ...exec.agent, options: { ...exec.agent.options, reasoningEffort: ReasoningEffortId('high') } } }
+    const call = tool.execute({ ...task, model: 'choice', reasoning_effort: 'session' }, sessionExec as never)
+    if (model === 'fast') {
+      await expect(call).rejects.toThrow('has no reasoning effort "high"')
+      expect(activations).toEqual([])
+    } else {
+      await call
+      expect(activations[0]?.spec.request.agentOptions?.reasoningEffort).toBe('high')
+    }
+  })
+
+  it('applies explicit effort on the inherited model', async () => {
+    const { tool, activations } = harness({ roots: [root] })
+    await tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model: 'auto', reasoning_effort: 'high' }, exec as never)
+    expect(activations[0]?.spec.request.agentOptions).toEqual({ reasoningEffort: 'high' })
+  })
+
+  it('rejects unknown aliases without starting a child', async () => {
+    const { tool, activations } = harness({ roots: [root] })
+    await expect(tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model: 'typo' }, exec as never))
+      .rejects.toThrow('unknown model alias "typo"')
+    expect(activations).toEqual([])
+  })
+
+  it('requires provider and model together', async () => {
+    const { tool } = harness({ roots: [root], modelSelection: true })
+    await expect(tool.execute({ ...task, subagent_type: 'acme:comment-sicko', model: 'judge' }, exec as never))
+      .rejects.toThrow('unknown model alias "judge"')
+  })
+
+  it('hides raw route parameters and rejects them at the executor while selection is off', async () => {
+    const { tool, activations } = harness({ roots: [root] })
+    const parameters = tool.parameters as { properties?: Record<string, unknown> }
+    expect(parameters.properties).not.toHaveProperty('provider')
+    await expect(tool.execute({ ...task, subagent_type: 'acme:comment-sicko', provider: 'alpha', model: 'judge' }, exec as never)).rejects.toThrow('disabled')
+    expect(activations).toEqual([])
+  })
+})
+
+describe('pstack setup approval', () => {
+  async function setup(approval?: CompatHost['approveRoutes']) {
+    await mkdir(join(root, 'agents-home', 'pstack-plugin', 'hooks'), { recursive: true })
+    await writeFile(join(root, 'agents-home', 'pstack-plugin', 'hooks', 'session-start-context.md'), 'mandate')
+    return harness({}, undefined, approval).tools.get('claude_agent_setup')!
+  }
+  const preferences_json = JSON.stringify({ modelAliases: { chosen: { provider: 'alpha', model: 'judge' } }, roles: { 'feature, refactoring': 'chosen @high' } })
+  it('fails closed without a human confirmation provider', async () => {
+    const tool = await setup()
+    await expect(tool.execute({ preferences_json }, exec as never)).rejects.toThrow('not authorized')
+    expect(loadPstackPreferences()?.allowedModels).toEqual([])
+  })
+  it('saves nothing after direct human denial', async () => {
+    const approval = vi.fn(async () => false)
+    const tool = await setup(approval)
+    await expect(tool.execute({ preferences_json }, exec as never)).rejects.toThrow('not authorized')
+    expect(approval).toHaveBeenCalledOnce()
+    expect(loadPstackPreferences()?.modelAliases).toEqual({})
+  })
+  it('persists exact routes only after direct human confirmation and preserves other roles', async () => {
+    const approval = vi.fn(async (_routes: Array<{ provider: string; model: string }>) => true)
+    const tool = await setup(approval)
+    await tool.execute({ preferences_json }, exec as never)
+    expect(approval.mock.calls[0]?.[0]).toEqual([{ provider: 'alpha', model: 'judge' }])
+    expect(loadPstackPreferences()?.allowedModels).toEqual([{ provider: 'alpha', model: 'judge' }])
+    expect(Object.keys(loadPstackPreferences()!.roles)).toHaveLength(17)
+  })
+})
+
+describe('native pstack initialization', () => {
+  it('loads the mandate and configured sheet at initialization without duplicating SessionStart', async () => {
+    const sheetPath = join(root, 'sheet.md')
+    await writeFile(sheetPath, '\uFEFFsession hook: on\r\nbug-fix: opus\r\narchitect runners: FastJudge @high, inherit-parent @high, auto\r\ndefault effort: high\r\n')
+    await writeFile(join(root, 'hooks', 'session-start-context.md'), '<IMPORTANT>Invoke pstack:poteto-mode</IMPORTANT>')
+    const { contexts, hooks } = harness({ roots: [root], hooks: false, pstack: { root, sheetPath } })
+    expect(hooks).toEqual([])
+    expect(contexts[0]?.()).toContain('Invoke pstack:poteto-mode')
+    expect(contexts[0]?.()).toContain('bug-fix: opus')
+    expect(contexts[0]?.()).toContain('architect runners: FastJudge @high, inherit-parent @high, auto')
+    expect(contexts[0]?.()).toContain('default effort: high')
+    expect(contexts[0]?.()).toContain('Entries without a suffix use default effort; absent default or session passes reasoning_effort: session')
+    expect(contexts[0]?.()).toContain('Never collapse panel entries, including inherited entries')
+    expect(contexts[0]?.(true)).not.toContain('Invoke pstack:poteto-mode')
+    expect(contexts[0]?.()).toContain('use claude_agent, not the standard subagent tool')
+    await writeFile(sheetPath, '\uFEFFsession hook: off\r\n', 'utf16le')
+    expect(contexts[0]?.()).not.toContain('Invoke pstack:poteto-mode')
+    expect(contexts[0]?.()).toContain('claude_agent')
+    const bridged = harness({ roots: [root], pstack: { root, sheetPath } })
+    expect(bridged.hooks[0]?.skipSessionStart).toBe(true)
+  })
+})
+
+describe('claude-compat hooks', () => {
+  it('mounts one bridge for a root that has hooks.json', () => {
+    const { hooks } = harness({ roots: [root] })
+    expect(hooks).toEqual([{ configPath: join(root, 'hooks', 'hooks.json'), pluginRoot: root }])
+  })
+
+  it('mounts nothing when hooks are disabled', () => {
+    const { hooks } = harness({ roots: [root], hooks: false })
+    expect(hooks).toEqual([])
+  })
+})

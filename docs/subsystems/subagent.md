@@ -23,6 +23,8 @@ interface SubagentCapabilities {
   readonly agentPreset: boolean
   readonly outputSchema: boolean
   readonly depthLimit: boolean
+  /** Enforces requested direct-tool restrictions, including after cold resume. */
+  readonly toolFilter?: boolean
 }
 ```
 
@@ -76,6 +78,13 @@ interface SubagentStartRequest {
    * parent context.
    */
   readonly agentPreset?: string
+  /**
+   * Restricts inherited direct tools in the child without changing its parent.
+   * Requires `capabilities.toolFilter`; persisted and reapplied on cold resume.
+   * Scope-local tools follow the tool registry's restriction rules. This does
+   * not confine filesystem access through bash or other allowed tools.
+   */
+  readonly toolFilter?: ToolRestriction
   /** Optional short display label persisted with a session-backed child. */
   readonly label?: string
   /** Content delivered as the child's user message. */
@@ -124,6 +133,8 @@ interface ResolvedSubagentStartRequest extends SubagentStartRequest {
   readonly cwd: string
 }
 ```
+
+Optional `request.toolFilter` restricts inherited direct tools without changing the parent. Spawn and fork support it; providers without `capabilities.toolFilter` reject the request. The manager persists the restriction in the existing child descriptor and reapplies it on cold resume. This does not sandbox bash or filesystem access through other allowed tools.
 
 ## Local children and activations
 
@@ -405,6 +416,16 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 ### `ctx.subagentModelSelection` — `SubagentModelSelectionConfig`
 
 Host settings owner that records Session authorization before the first model request.
+
+```ts cordis-catalog
+/**
+ * Register an operator-owned route source through the caller's effect lifecycle.
+ * Sources cannot change an existing Session policy and are sampled only when enabled is null.
+ * @param source - Callback returning authorized routes, or undefined when absent; failures reject Agent creation.
+ * @returns Idempotent disposer that withdraws this registration.
+ */
+registerAllowedModelsSource(source: AllowedModelsSource): () => void
+```
 
 Source: [`packages/subagent/tool-subagent/src/model-selection-settings.ts`](../../packages/subagent/tool-subagent/src/model-selection-settings.ts)
 

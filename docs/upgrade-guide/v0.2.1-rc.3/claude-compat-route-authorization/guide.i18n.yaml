@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.1-rc.3/claude-compat-route-authorization/guide.md
+/:
+  en: 6a8ba0fdfa88dd62
+  zh: bb4cd9ed527681e8
+/authorize-explicit-claude-agent-model-routes:
+  en: a9502a6013069667
+  zh: e99f7ba5901b0f29
+/authorize-explicit-claude-agent-model-routes/change:
+  en: ef5ff5abd30b36dc
+  zh: 9725be12e5928249
+/authorize-explicit-claude-agent-model-routes/migration:
+  en: e5376db72f0b99dd
+  zh: 7abe65076368ff5c

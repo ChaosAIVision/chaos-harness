@@ -23,6 +23,8 @@ interface SubagentCapabilities {
   readonly agentPreset: boolean
   readonly outputSchema: boolean
   readonly depthLimit: boolean
+  /** Enforces requested direct-tool restrictions, including after cold resume. */
+  readonly toolFilter?: boolean
 }
 ```
 
@@ -76,6 +78,13 @@ interface SubagentStartRequest {
    * parent context.
    */
   readonly agentPreset?: string
+  /**
+   * Restricts inherited direct tools in the child without changing its parent.
+   * Requires `capabilities.toolFilter`; persisted and reapplied on cold resume.
+   * Scope-local tools follow the tool registry's restriction rules. This does
+   * not confine filesystem access through bash or other allowed tools.
+   */
+  readonly toolFilter?: ToolRestriction
   /** Optional short display label persisted with a session-backed child. */
   readonly label?: string
   /** Content delivered as the child's user message. */
@@ -124,6 +133,8 @@ interface ResolvedSubagentStartRequest extends SubagentStartRequest {
   readonly cwd: string
 }
 ```
+
+可选的 `request.toolFilter` 限制继承的直接工具，不改变父级。Spawn 和 fork 支持该选项；没有 `capabilities.toolFilter` 的 provider 会拒绝请求。管理器将限制持久化到现有子级 descriptor，并在冷恢复时重新应用。这不会对 bash 或通过其他允许工具进行的文件系统访问建立沙箱。
 
 ## 本地子代理与 activation
 
@@ -407,6 +418,16 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 ### `ctx.subagentModelSelection` — `SubagentModelSelectionConfig`
 
 Host settings owner that records Session authorization before the first model request.
+
+```ts cordis-catalog
+/**
+ * Register an operator-owned route source through the caller's effect lifecycle.
+ * Sources cannot change an existing Session policy and are sampled only when enabled is null.
+ * @param source - Callback returning authorized routes, or undefined when absent; failures reject Agent creation.
+ * @returns Idempotent disposer that withdraws this registration.
+ */
+registerAllowedModelsSource(source: AllowedModelsSource): () => void
+```
 
 Source: [`packages/subagent/tool-subagent/src/model-selection-settings.ts`](../../packages/subagent/tool-subagent/src/model-selection-settings.ts)
 

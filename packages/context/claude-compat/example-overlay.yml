@@ -1,12 +1,12 @@
 # Insert the compatibility plugin into any profile:
-#   dsh --profile web --patch ./packages/experimental/claude-compat/example-overlay.yml
+#   dsh --profile web --patch ./packages/context/claude-compat/example-overlay.yml
 #
 # `name` is an absolute source path because this package is unpublished and its
 # peer dependencies are `workspace:*`, which a profile install cannot resolve.
 # Once published, the package name works instead.
 - insert:
     - id: claude-compat
-      name: '/Users/chaos/.local/share/chaos-harness/packages/experimental/claude-compat/src/index.ts'
+      name: '/Users/chaos/.local/share/chaos-harness/packages/context/claude-compat/src/index.ts'
       config:
         roots:
           - '~/.agents/pstack-plugin'

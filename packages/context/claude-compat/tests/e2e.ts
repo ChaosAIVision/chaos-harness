@@ -7,7 +7,7 @@
  * dispatch happened, that a child session was created, and that the child's
  * wire request carried the configured route and the agent declaration.
  *
- *   node --import tsx/esm packages/experimental/claude-compat/tests/e2e.ts
+ *   node --import tsx/esm packages/context/claude-compat/tests/e2e.ts
  *   E2E_MODEL_ROUTE=deepseek-official/deepseek-v4-flash node --import tsx/esm .../e2e.ts
  */
 

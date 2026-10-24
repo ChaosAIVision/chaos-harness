@@ -459,8 +459,8 @@ export type Config = LocalConfig
 
 ## `@deepseek-ai/dsh-claude-compat`
 
-- `inject`: `tools` · `subagents`
-- `source`: [`packages/experimental/claude-compat/src/index.ts:43`](../packages/experimental/claude-compat/src/index.ts)
+- `inject`: `tools` · `subagents` · `sessionProjections`
+- `source`: [`packages/context/claude-compat/src/index.ts:56`](../packages/context/claude-compat/src/index.ts)
 
 ```ts config-catalog
 /** Claude plugin discovery, child routing, and initialization settings. */
@@ -475,7 +475,7 @@ export interface Config {
    * parent route.
    */
   models: Record<string, RouteConfig>
-  /** Model-only names resolved to operator-configured routes. */
+  /** Model-only names resolved to operator-configured routes; aliases do not grant Session authorization. */
   modelAliases: Record<string, RouteConfig>
   /** Native pstack initialization; replaces this root's bridged SessionStart. */
   pstack?: {
@@ -484,7 +484,7 @@ export interface Config {
     /** Saved model-choice sheet read at agent initialization; `~` is expanded. */
     sheetPath: string
   } | undefined
-  /** Let model-supplied `provider`/`model`/`reasoning_effort` override `models`. */
+  /** Allow raw provider/model overrides of standing routes; recorded Session authorization still applies. */
   modelSelection: boolean
   /** Mount a hook bridge for each root that has `hooks/hooks.json`. */
   hooks: boolean
@@ -1607,7 +1607,7 @@ export interface HmrConfig extends ChokidarOptions {
 ## `@deepseek-ai/dsh-hooks-claude-code`
 
 - `inject`: `shell` · `agents` · `workingDirectory`
-- `source`: [`packages/experimental/hooks-claude-code/src/index.ts:50`](../packages/experimental/hooks-claude-code/src/index.ts)
+- `source`: [`packages/context/hooks-claude-code/src/index.ts:50`](../packages/context/hooks-claude-code/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: where the CC hook config lives + substitution roots. */
@@ -4233,7 +4233,7 @@ export interface Config {
 
 - `inject`: `tools` · `subagents` · `systemPrompt` · `sessionProjections`
 - `refs`: [`AgentOptions`](subsystems/core.zh.md)
-- `source`: [`packages/subagent/tool-subagent/src/index.ts:46`](../packages/subagent/tool-subagent/src/index.ts)
+- `source`: [`packages/subagent/tool-subagent/src/index.ts:52`](../packages/subagent/tool-subagent/src/index.ts)
 
 ```ts config-catalog
 /** Config: which registered provider this tool delegates to, plus child defaults. */
@@ -4931,7 +4931,7 @@ export interface Config {
 | `@deepseek-ai/dsh-experimental-webworker-packer` | — | [`packages/experimental/webworker-packer/src/index.ts`](../packages/experimental/webworker-packer/src/index.ts) |
 | `@deepseek-ai/dsh-experimental-webworker-runtime` | — | [`packages/experimental/webworker-runtime/src/index.ts`](../packages/experimental/webworker-runtime/src/index.ts) |
 | `@deepseek-ai/dsh-home-paths` | — | [`packages/util/home-paths/src/index.ts`](../packages/util/home-paths/src/index.ts) |
-| `@deepseek-ai/dsh-hook-protocol` | — | [`packages/experimental/hook-protocol/src/index.ts`](../packages/experimental/hook-protocol/src/index.ts) |
+| `@deepseek-ai/dsh-hook-protocol` | — | [`packages/context/hook-protocol/src/index.ts`](../packages/context/hook-protocol/src/index.ts) |
 | `@deepseek-ai/dsh-http-proxy` | — | [`packages/util/http-proxy/src/index.ts`](../packages/util/http-proxy/src/index.ts) |
 | `@deepseek-ai/dsh-launch-environment` | — | [`packages/util/launch-environment/src/index.ts`](../packages/util/launch-environment/src/index.ts) |
 | `@deepseek-ai/dsh-lazy-require` | — | [`packages/util/lazy-require/src/index.ts`](../packages/util/lazy-require/src/index.ts) |

@@ -180,7 +180,7 @@ export function hasConfiguredLlmSelection(options: AgentOptions | undefined): bo
  * @param inheritParentReasoningEffort - Whether an omitted effort may inherit from the parent route.
  */
 export async function preflightChildLlmRoute(
-  llm: LlmRuntime,
+  llm: Pick<LlmRuntime, 'resolveCallConfig'>,
   parentOptions: AgentOptions,
   requested: AgentOptions | undefined,
   signal: AbortSignal,

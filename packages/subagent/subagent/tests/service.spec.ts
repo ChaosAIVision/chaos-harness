@@ -238,6 +238,7 @@ describe('SubagentRuntime', () => {
     ['agentOptions', { agentOptions: { model: 'child-model' } }],
     ['outputSchema', { outputSchema: { type: 'object', properties: {} } }],
     ['depthLimit', { maxDepth: 1 }],
+    ['toolFilter', { toolFilter: { deny: ['edit', 'write'] } }],
   ] as const)('rejects unsupported %s before provider startup', async (_capability, override) => {
     const { subagents } = await service()
     const provider = new StubProvider('weak', NO_CAPS)
@@ -245,6 +246,16 @@ describe('SubagentRuntime', () => {
     await expect(start(subagents, 'weak', baseRequest(override)))
       .rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' })
     expect(provider.startCount).toBe(0)
+  })
+
+  it('forwards the restriction to an external provider that advertises toolFilter', async () => {
+    const { subagents } = await service()
+    const provider = new StubProvider('filtered', { ...ALL_CAPS, toolFilter: true })
+    subagents.registerProvider(provider)
+    const toolFilter = { deny: ['edit', 'write'] }
+    await start(subagents, provider.name, baseRequest({ toolFilter }))
+    expect(provider.lastRequest?.toolFilter).toEqual(toolFilter)
+    expect(provider.startCount).toBe(1)
   })
 
   it('rejects a reserved child identity for an external backend before startup', async () => {

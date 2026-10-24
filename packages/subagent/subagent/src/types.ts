@@ -13,7 +13,7 @@ import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import type { ObjectJsonSchema } from '@deepseek-ai/dsh-tools'
+import type { ObjectJsonSchema, ToolRestriction } from '@deepseek-ai/dsh-tools'
 
 /** Identifies one accepted subagent run across its lifecycle event pair. */
 export type SubagentRunId = Branded<'SubagentRunId'>
@@ -126,6 +126,8 @@ export interface SubagentCapabilities {
   readonly agentPreset: boolean
   readonly outputSchema: boolean
   readonly depthLimit: boolean
+  /** Enforces requested direct-tool restrictions, including after cold resume. */
+  readonly toolFilter?: boolean
 }
 
 /**
@@ -142,6 +144,13 @@ export interface SubagentStartRequest {
    * parent context.
    */
   readonly agentPreset?: string
+  /**
+   * Restricts inherited direct tools in the child without changing its parent.
+   * Requires `capabilities.toolFilter`; persisted and reapplied on cold resume.
+   * Scope-local tools follow the tool registry's restriction rules. This does
+   * not confine filesystem access through bash or other allowed tools.
+   */
+  readonly toolFilter?: ToolRestriction
   /** Optional short display label persisted with a session-backed child. */
   readonly label?: string
   /** Content delivered as the child's user message. */

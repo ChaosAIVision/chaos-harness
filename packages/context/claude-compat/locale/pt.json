@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Compatibilidade com Claude Code",
+    "description": "Execute no DeepSeek Harness os subagentes nomeados, as rotas de modelos por função e hooks.json de um plugin do Claude Code."
+  }
+}

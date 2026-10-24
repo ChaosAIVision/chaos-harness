@@ -108,11 +108,11 @@
   en: 8d6fa78d450a0e56
   zh: 8d6fa78d450a0e56
 /session-persistence-event-catalog/events/hook/hook-invoked-log-only:
-  en: 705ffb04951178a1
-  zh: 6031b9e7b48f5549
+  en: 6ed621fca0fa8d9c
+  zh: a46e1b8f9e80dd73
 /session-persistence-event-catalog/events/hook/hook-result-log-only:
-  en: b84c2cbfca534935
-  zh: ee1d71fad6dfb896
+  en: 0ad49be6a41fb16b
+  zh: 05893c26dcf7b82e
 /session-persistence-event-catalog/events/image:
   en: 4378f94cd30a2ba8
   zh: 4378f94cd30a2ba8
@@ -1056,11 +1056,11 @@
   en: d13de5c951afd4e5
   zh: 44069b6d0f3b8303
 /session-persistence-event-catalog/resolved-persistence-types/headerline:
-  en: d0e4b453af58af7f
-  zh: 8209d2206840b137
+  en: 53b1a056032e5d59
+  zh: ab8e0a7447f6e9b1
 /session-persistence-event-catalog/resolved-persistence-types/hookdialect:
-  en: c5418d1e906e9114
-  zh: 0bc528427386d8a4
+  en: c71ca1c75d2229b0
+  zh: d6b66d7efd5d7483
 /session-persistence-event-catalog/resolved-persistence-types/imageattachmentref:
   en: 76ee1e266cd651da
   zh: 55c7c95a223ccbed
@@ -1467,8 +1467,8 @@
   en: 1bc55be85a68f0a3
   zh: 9e84a55ed11bba5d
 /session-persistence-event-catalog/resolved-persistence-types/decision-durationms-exitcode-handlerid:
-  en: a99ac57bbec0370f
-  zh: 9073329e324a66e0
+  en: fe80b378f7794983
+  zh: 81d295191673d50a
 /session-persistence-event-catalog/resolved-persistence-types/delayms-failure-maxretries-mode:
   en: 27987dc154def5d8
   zh: 7dd493f04daa654f
@@ -1482,8 +1482,8 @@
   en: a07969828eed2e6f
   zh: e06893743af544b5
 /session-persistence-event-catalog/resolved-persistence-types/dialect-handlerid-matcher-point:
-  en: eeba88520aacd126
-  zh: 8e2ca4e2bd2c1e3a
+  en: 15fa05df233bfe88
+  zh: 28348ea60c505bcb
 /session-persistence-event-catalog/resolved-persistence-types/end-start:
   en: 4b7a8793663d3fef
   zh: 249459c825d330c3

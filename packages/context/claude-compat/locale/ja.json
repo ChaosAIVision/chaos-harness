@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Claude Code 互換性",
+    "description": "Claude Code プラグインの名前付きサブエージェント、役割ごとのモデルルーティング、hooks.json を DeepSeek Harness 上で実行します。"
+  }
+}

@@ -10,6 +10,11 @@
     { "path": "../../../vendor/cordis" },
     { "path": "../../../vendor/schemastery" },
     { "path": "../../core/tools" },
+    { "path": "../../util/home-paths" },
+    { "path": "../../interaction/user-questions" },
+    { "path": "../../core/agent" },
+    { "path": "../../session/session-projection" },
+    { "path": "../../subagent/tool-subagent" },
     { "path": "../../llm/llm" },
     { "path": "../../subagent/subagent" },
     { "path": "../hooks-claude-code" }

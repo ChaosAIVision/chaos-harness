@@ -590,7 +590,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 }
 ```
 
-来源：[`packages/experimental/hook-protocol/src/types.ts:19`](../packages/experimental/hook-protocol/src/types.ts)
+来源：[`packages/context/hook-protocol/src/types.ts:19`](../packages/context/hook-protocol/src/types.ts)
 
 <a id="hookresult--log-only"></a>
 
@@ -613,7 +613,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 }
 ```
 
-来源：[`packages/experimental/hook-protocol/src/types.ts:31`](../packages/experimental/hook-protocol/src/types.ts)
+来源：[`packages/context/hook-protocol/src/types.ts:31`](../packages/context/hook-protocol/src/types.ts)
 
 ### `image/*`
 
@@ -3693,13 +3693,13 @@ SHA-256: `18ee62b8900a4c3d046700f05d7a4d49d6cab2a660a020c87481d1603dd8bd4f`
 
 <a id="persistence-type-hookdialect"></a>
 
-<a id="persistence-type-packagesexperimentalhook-protocolsrctypestshookdialect"></a>
+<a id="persistence-type-packagescontexthook-protocolsrctypestshookdialect"></a>
 
 ### `HookDialect`
 
 SHA-256: `a6b41f5bede8094d7bf635be5d69b1bd7a25e006ca9cf9415bceb9322f1a7feb`
 
-来源：[`packages/experimental/hook-protocol/src/types.ts:48`](../packages/experimental/hook-protocol/src/types.ts)
+来源：[`packages/context/hook-protocol/src/types.ts:48`](../packages/context/hook-protocol/src/types.ts)
 
 以下类型之一：
 
@@ -6109,7 +6109,7 @@ SHA-256: `da60ed58a8fa23d7aa4920ab5c1f4e3d28109cb0797ef9e5c8b125721b847582`
 
 SHA-256: `8ad45ad053b4d89f8865c17cc9ff3b8748e86045f3f0fb816269a34af2619141`
 
-来源：[`packages/experimental/hook-protocol/src/types.ts:31`](../packages/experimental/hook-protocol/src/types.ts)
+来源：[`packages/context/hook-protocol/src/types.ts:31`](../packages/context/hook-protocol/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -6189,7 +6189,7 @@ SHA-256: `aba175fb20ffc71112c55efe70458ff5d7dbfb83501892b4ba8d077f0ea5d7ba`
 
 SHA-256: `119abe2b9c0b2f46ecb31d82b9acba4d4b30e049f655e2475e8b4ae12d5a9e25`
 
-来源：[`packages/experimental/hook-protocol/src/types.ts:19`](../packages/experimental/hook-protocol/src/types.ts)
+来源：[`packages/context/hook-protocol/src/types.ts:19`](../packages/context/hook-protocol/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|

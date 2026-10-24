@@ -588,7 +588,7 @@ Source: [`packages/goal/goal/src/domain.ts:66`](../packages/goal/goal/src/domain
 }
 ```
 
-Source: [`packages/experimental/hook-protocol/src/types.ts:19`](../packages/experimental/hook-protocol/src/types.ts)
+Source: [`packages/context/hook-protocol/src/types.ts:19`](../packages/context/hook-protocol/src/types.ts)
 
 <a id="hookresult--log-only"></a>
 
@@ -611,7 +611,7 @@ Source: [`packages/experimental/hook-protocol/src/types.ts:19`](../packages/expe
 }
 ```
 
-Source: [`packages/experimental/hook-protocol/src/types.ts:31`](../packages/experimental/hook-protocol/src/types.ts)
+Source: [`packages/context/hook-protocol/src/types.ts:31`](../packages/context/hook-protocol/src/types.ts)
 
 ### `image/*`
 
@@ -3691,13 +3691,13 @@ Sources: [`packages/session/session-persistence-jsonl/src/format.ts:83`](../pack
 
 <a id="persistence-type-hookdialect"></a>
 
-<a id="persistence-type-packagesexperimentalhook-protocolsrctypestshookdialect"></a>
+<a id="persistence-type-packagescontexthook-protocolsrctypestshookdialect"></a>
 
 ### `HookDialect`
 
 SHA-256: `a6b41f5bede8094d7bf635be5d69b1bd7a25e006ca9cf9415bceb9322f1a7feb`
 
-Sources: [`packages/experimental/hook-protocol/src/types.ts:48`](../packages/experimental/hook-protocol/src/types.ts)
+Sources: [`packages/context/hook-protocol/src/types.ts:48`](../packages/context/hook-protocol/src/types.ts)
 
 One of:
 
@@ -6107,7 +6107,7 @@ Sources: [`packages/session/working-directory/src/index.ts:36`](../packages/sess
 
 SHA-256: `8ad45ad053b4d89f8865c17cc9ff3b8748e86045f3f0fb816269a34af2619141`
 
-Sources: [`packages/experimental/hook-protocol/src/types.ts:31`](../packages/experimental/hook-protocol/src/types.ts)
+Sources: [`packages/context/hook-protocol/src/types.ts:31`](../packages/context/hook-protocol/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -6187,7 +6187,7 @@ Array of [`{ description, name }`](#persistence-type-sha256-83079c8a3f733ac3fa60
 
 SHA-256: `119abe2b9c0b2f46ecb31d82b9acba4d4b30e049f655e2475e8b4ae12d5a9e25`
 
-Sources: [`packages/experimental/hook-protocol/src/types.ts:19`](../packages/experimental/hook-protocol/src/types.ts)
+Sources: [`packages/context/hook-protocol/src/types.ts:19`](../packages/context/hook-protocol/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|

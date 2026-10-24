@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Совместимость с Claude Code",
+    "description": "Запускайте именованных субагентов, маршруты моделей для отдельных ролей и hooks.json плагина Claude Code в DeepSeek Harness."
+  }
+}

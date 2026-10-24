@@ -3195,7 +3195,14 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     key: 'subagentModelSelection',
     summary: 'Host settings owner that records Session authorization before the first model request.',
     description: 'Host settings owner that records Session authorization before the first model request.',
-    methods: [],
+    methods: [
+      {
+        signature: 'registerAllowedModelsSource(source: AllowedModelsSource): () => void',
+        description: 'Register an operator-owned route source through the caller\'s effect lifecycle. Sources cannot change an existing Session policy and are sampled only when enabled is null.',
+        parameters: [{ name: 'source', description: 'Callback returning authorized routes, or undefined when absent; failures reject Agent creation.' }],
+        returns: 'Idempotent disposer that withdraws this registration.',
+      },
+    ],
   },
   {
     key: 'subagents',
@@ -5035,6 +5042,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AgentStatus',
     declaration: 'export type AgentStatus = \'idle\' | \'running\';',
+  },
+  {
+    name: 'AllowedModelRoute',
+    declaration: 'export interface AllowedModelRoute {\n    readonly provider: string;\n    readonly model: string;\n}',
+  },
+  {
+    name: 'AllowedModelsSource',
+    declaration: 'export type AllowedModelsSource = () => readonly AllowedModelRoute[] | undefined | Promise<readonly AllowedModelRoute[] | undefined>;',
   },
   {
     name: 'AnalyticsPreset',
@@ -8218,7 +8233,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentCapabilities',
-    declaration: 'export interface SubagentCapabilities {\n    readonly agentOptions: boolean;\n    readonly agentPreset: boolean;\n    readonly outputSchema: boolean;\n    readonly depthLimit: boolean;\n}',
+    declaration: 'export interface SubagentCapabilities {\n    readonly agentOptions: boolean;\n    readonly agentPreset: boolean;\n    readonly outputSchema: boolean;\n    readonly depthLimit: boolean;\n    readonly toolFilter?: boolean;\n}',
   },
   {
     name: 'SubagentCatalogEntry',
@@ -8294,7 +8309,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentStartRequest',
-    declaration: 'export interface SubagentStartRequest {\n    readonly cwd?: string;\n    readonly agentPreset?: string;\n    readonly label?: string;\n    readonly prompt: ContentBlock[];\n    readonly parent: Agent;\n    readonly signal: AbortSignal;\n    readonly agentOptions?: AgentOptions;\n    readonly outputSchema?: ObjectJsonSchema;\n    readonly maxDepth?: number;\n}',
+    declaration: 'export interface SubagentStartRequest {\n    readonly cwd?: string;\n    readonly agentPreset?: string;\n    readonly toolFilter?: ToolRestriction;\n    readonly label?: string;\n    readonly prompt: ContentBlock[];\n    readonly parent: Agent;\n    readonly signal: AbortSignal;\n    readonly agentOptions?: AgentOptions;\n    readonly outputSchema?: ObjectJsonSchema;\n    readonly maxDepth?: number;\n}',
   },
   {
     name: 'SubagentStopReason',
