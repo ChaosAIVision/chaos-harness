@@ -545,7 +545,8 @@ describe('web e2e: persisted subagent conversation and human continuation', () =
         timeout: 10_000,
       }).toBe(0)
       await switcher.waitFor()
-      await page.keyboard.press('Escape')
+      await page.mouse.move(0, 0)
+      await expect.poll(() => switcher.getAttribute('aria-expanded')).toBe('false')
     } finally {
       release.resolve(undefined)
       offAdmission()
