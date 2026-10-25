@@ -7,9 +7,16 @@ kind: "package-bundle"
 
 [English](README.md) | 中文
 
-## Summary
+## 概述
 
 `dsh tui` 打开交互式终端应用。其配置仅包含终端客户端。应用通过同一个 `dsh` 可执行文件启动 Web 配置，使用系统分配的回环端口，且不打开浏览器。Web 主机拥有会话、预设、技能、设置、命令和执行状态。终端使用现有类型化 Remote API 和持有引用的客户端会话。
+
+## 目录
+
+- [使用此包](#use-this-package)
+- [模型体验](#model-experience)
+- [已知限制](#known-limitations-and-deferred-work)
+- [开发说明](#dev-note)
 
 ## Use this package
 
@@ -29,13 +36,19 @@ dsh tui --connect-url-file /path/to/private-connect-url
 
 斜杠发现包含活动 Host 命令和可调用 skill。名称与终端动作冲突时，`/host:NAME` 和 `/skill:NAME` 保留对原操作的显式访问。子任务历史只使用终端导航，不激活普通 Agent 的命令目录。
 
+<a id="dev-note"></a>
+
+## 开发备注
+
+`host.ts` 负责子进程和私有就绪握手。`client.ts` 加载独立的私有 `lib/client.js` bundle，让主机与客户端的 Context 声明保留在不同的编译程序中。它的 `terminalRequests` 访问器承载没有生成 Remote 方法的已认证 HTTP 路由。`renderer.ts` 负责临时终端焦点；保留的客户端 Session 负责历史和提交状态。
+
 ## Model Experience
 
 ### Existing Web composition
 
 #### What the model sees
 
-所选 Web 配置、预设、会话和命令提供模型上下文。终端渲染不会增加模型提示或工具策略。
+所选 `--host-profile`、`--preset`、会话和命令提供模型上下文。终端渲染不会增加模型提示或工具策略。
 
 #### Token effect
 
@@ -47,4 +60,7 @@ dsh tui --connect-url-file /path/to/private-connect-url
 
 ## Known Limitations and Deferred Work
 
-应用需要交互式终端。文档通过文本、表格和导航视图呈现，不复现浏览器布局或 PDF 页面图像。主机重启后，其启动 URL 失效；连接模式需要更新私有 URL 文件并重新启动终端。主机插件可能新增仅面向浏览器的 UI 功能，这些功能需要终端呈现器才能在此使用。
+- 应用需要交互式终端。
+- 文档通过文本、表格和导航视图呈现，不复现浏览器布局或 PDF 页面图像。
+- 主机重启后，其启动 URL 失效；连接模式需要更新私有 URL 文件并重新启动终端。
+- 主机插件可能新增仅面向浏览器的 UI 功能，这些功能需要终端呈现器才能在此使用。

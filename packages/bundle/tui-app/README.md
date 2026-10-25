@@ -11,6 +11,13 @@ English | [中文](README.zh.md)
 
 `dsh tui` opens an interactive terminal application. Its profile contains the terminal Client only. The application starts the same `dsh` executable with the Web profile, an OS-assigned loopback port, and no browser. The Web Host owns sessions, presets, skills, settings, commands, and execution. The terminal uses the existing typed Remote API and retained Client Sessions.
 
+## Table of Contents
+
+- [Use this package](#use-this-package)
+- [Model Experience](#model-experience)
+- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [Dev Note](#dev-note)
+
 ## Use this package
 
 ```sh
@@ -29,13 +36,17 @@ Closing the terminal disposes Client state, restores terminal modes, and stops o
 
 Slash discovery includes active Host commands and invocable skills. When a name conflicts with a terminal action, `/host:NAME` and `/skill:NAME` retain explicit access to the original operation. Child history uses terminal navigation without ordinary-Agent command activation.
 
+## Dev Note
+
+`host.ts` owns the child process and private readiness handshake. `client.ts` loads the separate private `lib/client.js` bundle so Host and Client Context declarations stay in separate compiler programs. Its `terminalRequests` accessor carries authenticated HTTP routes that have no generated Remote method. `renderer.ts` owns transient terminal focus; retained Client Sessions own history and submission state.
+
 ## Model Experience
 
 ### Existing Web composition
 
 #### What the model sees
 
-The selected Web profile, preset, session, and commands supply model context. Terminal rendering introduces no model prompt or tool policy.
+The selected `--host-profile`, `--preset`, session, and commands supply model context. Terminal rendering introduces no model prompt or tool policy.
 
 #### Token effect
 
@@ -47,4 +58,7 @@ The terminal does not change request prefixes. The existing Host composition and
 
 ## Known Limitations and Deferred Work
 
-The application requires an interactive terminal. Documents use text, table, and navigation views rather than browser layouts or PDF page images. A Host restart invalidates its launch URL; attachment requires an updated private URL file and a new terminal invocation. Host plugins can add browser-specific UI contributions that need a terminal presenter before those contributions are usable here.
+- The application requires an interactive terminal.
+- Documents use text, table, and navigation views rather than browser layouts or PDF page images.
+- A Host restart invalidates its launch URL; attachment requires an updated private URL file and a new terminal invocation.
+- Host plugins can add browser-specific UI contributions that need a terminal presenter before those contributions are usable here.

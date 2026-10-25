@@ -120,7 +120,7 @@ describe('home-scoped pstack preferences', () => {
   it('rejects a structurally forged approval at runtime and writes nothing', async () => {
     installed()
     const before = readFileSync(pstackConfigPath(), 'utf8')
-    const forged = { routes: [{ provider: 'evil', model: 'other' }] } as unknown as HumanApproval
+    const forged = { routes: [{ provider: 'evil', model: 'other' }] } as HumanApproval
     await expect(savePstackPreferences({ roles: {} }, forged)).rejects.toThrow('human approval')
     expect(readFileSync(pstackConfigPath(), 'utf8')).toBe(before)
   })

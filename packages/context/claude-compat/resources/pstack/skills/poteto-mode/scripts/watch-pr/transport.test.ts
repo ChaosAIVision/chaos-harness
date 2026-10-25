@@ -137,7 +137,7 @@ const verdicts = (stdout: string): unknown[] =>
   stdout
     .trim()
     .split("\n")
-    .map((line) => JSON.parse(line) as unknown);
+    .map((line): unknown => JSON.parse(line));
 
 // The no-ci fixtures replay what gh returned for a mergeable PR in a repository
 // with no checks configured: `gh pr checks` exits 1 with "no checks reported"

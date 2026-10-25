@@ -72,6 +72,15 @@ describe('unique object-name prefix search', () => {
 })
 
 describe('maintained repository reference policy', () => {
+  it('keeps audit evidence historical while checking maintained documentation', () => {
+    const hash = 'abcdef1234567890abcdef1234567890abcdef12'
+    const commits = new Set([hash])
+    expect(findRepositoryReferences('.audit/tui/decisions.tsv', hash, commits)).toEqual([])
+    expect(findRepositoryReferences('docs/decisions.md', hash, commits)).toEqual([
+      { file: 'docs/decisions.md', line: 1, kind: 'commit-hash' },
+    ])
+  })
+
   it('permits only the independent kit repository and its source URLs', () => {
     for (const suffix of ['', '.git', '/tree/main/packages/entry']) {
       expect(findRepositoryReferences('package.json', `${organizationUrl}/libreoffice-kit${suffix}`, new Set())).toEqual([])

@@ -209,7 +209,7 @@ describe('SubagentModelSelectionConfig.widenSession', () => {
   it('rejects a structurally forged proof before persisting or appending', async () => {
     const { ctx, create } = await boot()
     const agent = await create()
-    const forged = { routes: [A, B] } as unknown as HumanApproval
+    const forged = { routes: [A, B] } as HumanApproval
     const recorded = { ...steps('yes'), ask: async () => forged }
 
     await expect(ctx.subagentModelSelection.widenSession(agent, [A, B], recorded, signal))

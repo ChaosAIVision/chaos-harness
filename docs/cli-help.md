@@ -15,6 +15,7 @@ Run `pnpm run gen-cli-help` to regenerate; run `pnpm run verify-cli-help` to che
 - [`dsh headless`](#dsh-headless)
 - [`dsh sdk`](#dsh-sdk)
 - [`dsh sdk-minimal`](#dsh-sdk-minimal)
+- [`dsh tui`](#dsh-tui)
 - [`dsh web`](#dsh-web)
 
 <a id="dsh"></a>
@@ -168,6 +169,28 @@ Options:
 Example:
   dsh --profile sdk-minimal     serve one SDK runtime until its client disconnects
 
+```
+
+<a id="dsh-tui"></a>
+## `dsh tui`
+
+Invocations: `dsh tui --help`, `dsh --profile tui --help`
+
+```text
+Usage: dsh tui [options]
+
+Use DeepSeek Harness in your terminal.
+
+Options:
+  --connect-url-file <path>  attach using an authenticated URL in a private file
+  --host-profile <name>      Web profile to start when this terminal owns the
+                             Host (default: "web")
+  --cwd <path>               working directory for new sessions (default:
+                             "/Users/chaos/.local/share/chaos-harness-wt/terminal-ui")
+  --resume <id>              resume a session by ID
+  --load                     choose an existing session
+  --preset <name>            preset for a new session
+  -h, --help                 show this help
 ```
 
 <a id="dsh-web"></a>

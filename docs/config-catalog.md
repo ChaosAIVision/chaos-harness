@@ -4410,6 +4410,27 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-tool-workspace-dependencies -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-tui-app -->
+<a id="deepseek-aidsh-tui-app"></a>
+
+## `@deepseek-ai/dsh-tui-app`
+
+- `inject`: `cmdlineArgs`
+- `source`: [`packages/bundle/tui-app/src/index.ts:15`](../packages/bundle/tui-app/src/index.ts)
+
+```ts config-catalog
+/** Process lifecycle configuration, independently patchable from invocation flags. */
+export interface Config {
+  /** Run the terminal client or mount the owned Host readiness bridge. */
+  mode: 'terminal' | 'host-bridge'
+  /** Maximum time in milliseconds to wait for Host startup and Client connection. */
+  startupTimeoutMs: number
+  /** Maximum time in milliseconds to wait for the owned Host to stop before terminating it. */
+  shutdownTimeoutMs: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-tui-app -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-typert-loader -->
 <a id="deepseek-aidsh-typert-loader"></a>
 
