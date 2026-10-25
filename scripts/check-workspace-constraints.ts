@@ -258,6 +258,8 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   '@deepseek-ai/dsh-experimental-webworker-packer': ['bin.js', 'lib/repository-*.js'],
   // Startup and runtime share the advertised URL parser.
   '@deepseek-ai/dsh-web-app': ['lib/public-url-*.js'],
+  // The terminal entry loads its private Client bundle after Host startup.
+  '@deepseek-ai/dsh-tui-app': ['lib/client.js'],
   // The headless entry and its startup row share the JSON projection code
   // through a hashed tsdown chunk; both import it by relative path.
   '@deepseek-ai/dsh-headless': ['lib/json-stream-*.js'],

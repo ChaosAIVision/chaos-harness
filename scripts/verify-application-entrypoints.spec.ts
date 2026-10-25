@@ -47,6 +47,16 @@ describe('application entrypoints', () => {
     ])
   })
 
+  it('rejects an unclassified executable beside the vendored skill tools', () => {
+    const root = fixture()
+    const path = 'packages/context/claude-compat/resources/pstack/skills/poteto-mode/scripts/rogue.mjs'
+    write(root, path, '#!/usr/bin/env node\n')
+
+    expect(applicationEntrypointViolations(root)).toEqual([
+      `${path}: executable source has no application/build/test classification`,
+    ])
+  })
+
   it('rejects an executable at an application package root', () => {
     const root = fixture()
     write(root, 'apps/example/rogue.mjs', '#!/usr/bin/env node\n')

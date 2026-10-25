@@ -13,8 +13,11 @@ export const name = 'tui-app'
 export const inject = ['cmdlineArgs']
 /** Process lifecycle configuration, independently patchable from invocation flags. */
 export interface Config {
+  /** Run the terminal client or mount the owned Host readiness bridge. */
   mode: 'terminal' | 'host-bridge'
+  /** Maximum time in milliseconds to wait for Host startup and Client connection. */
   startupTimeoutMs: number
+  /** Maximum time in milliseconds to wait for the owned Host to stop before terminating it. */
   shutdownTimeoutMs: number
 }
 /** Validated terminal and owned subprocess lifecycle configuration. */

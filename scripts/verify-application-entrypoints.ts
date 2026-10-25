@@ -29,10 +29,16 @@ const MANIFEST_BIN_ALLOWLIST = new Map<string, ManifestBin>([
   ['packages/experimental/webworker-packer/package.json', { 'dsh-pack-vfs-image': './bin.js' }],
 ])
 
-/** Every JavaScript executable in an application or packaging workspace has one explicit role. */
+/** Every JavaScript executable in an application, packaging workspace, or skill bundle has one explicit role. */
 const EXECUTABLE_SOURCE_ALLOWLIST = new Map<string, string>([
   ['apps/cli/src/bin.ts', 'supported dsh application launcher'],
   ['apps/desktop/scripts/logged-notarytool.mjs', 'build-only notarization logging wrapper'],
+  ['packages/context/claude-compat/resources/pstack/skills/poteto-mode/scripts/check-plan.mjs', 'vendored skill tooling for plan validation'],
+  ['packages/context/claude-compat/resources/pstack/skills/poteto-mode/scripts/check-playbooks.mjs', 'vendored skill tooling for playbook validation'],
+  ['packages/context/claude-compat/resources/pstack/skills/poteto-mode/scripts/orch/orch.ts', 'vendored skill tooling for orchestration state'],
+  ['packages/context/claude-compat/resources/pstack/skills/poteto-mode/scripts/resume.mjs', 'vendored skill tooling for checkpoint management'],
+  ['packages/context/claude-compat/resources/pstack/skills/poteto-mode/scripts/worktree-audit.mjs', 'vendored skill tooling for read-only worktree audits'],
+  ['packages/context/claude-compat/resources/pstack/skills/reflect/scripts/find-transcript.mjs', 'vendored skill tooling for transcript lookup'],
   ['packages/context/time-context/tests/fixtures/driver.ts', 'test-only subprocess driver'],
   ['packages/experimental/webworker-packer/bin.js', 'build-only wrapper'],
   ['packages/experimental/webworker-packer/src/bin.ts', 'build-only implementation'],

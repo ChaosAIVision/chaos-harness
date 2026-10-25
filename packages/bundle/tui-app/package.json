@@ -24,10 +24,11 @@
     "./locale/*.json": "./locale/*.json"
   },
   "files": [
-    "lib/**/*.js",
-    "lib/types/**/*.d.ts",
+    "locale/*.json",
+    "lib/index.js",
     "cordis.patch.yml",
-    "locale/*.json"
+    "lib/client.js",
+    "lib/types/**/*.d.ts"
   ],
   "license": "MIT",
   "dsh": {

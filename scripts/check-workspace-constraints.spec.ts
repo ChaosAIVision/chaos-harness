@@ -593,7 +593,11 @@ it('requires the Inspector Worker, Client chunks, and mirrored DevTools resource
 })
 
 it('requires both physical Client entries only for opted-in packages', () => {
-  for (const dir of ['packages/client/connection', 'packages/api/gateway', 'packages/typert/registry']) {
+  for (const dir of [
+    'packages/client/connection', 'packages/api/gateway', 'packages/typert/registry',
+    'packages/api/remotes', 'packages/api/session-controller', 'packages/api/terminal-controller',
+    'packages/client/file-upload',
+  ]) {
     const manifest = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), 'utf8')) as WorkspaceManifest['manifest']
     expect(checkWorkspaceManifest({ dir, manifest })).toEqual([])
     for (const omitted of ['lib/client.node.js', 'lib/client.browser.js']) {
@@ -602,6 +606,22 @@ it('requires both physical Client entries only for opted-in packages', () => {
         .toEqual([expect.stringContaining('package.json files must be')])
     }
   }
+})
+
+it('requires the private terminal Client bundle and rejects broader runtime payloads', () => {
+  const dir = 'packages/bundle/tui-app'
+  const manifest = JSON.parse(readFileSync(new URL(`../${dir}/package.json`, import.meta.url), 'utf8')) as WorkspaceManifest['manifest']
+  expect(manifest.exports).not.toHaveProperty('./client')
+  expect(checkWorkspaceManifest({ dir, manifest })).toEqual([])
+  for (const files of [
+    manifest.files!.filter(file => file !== 'lib/client.js'),
+    manifest.files!.map(file => file === 'lib/client.js' ? 'lib/**/*.js' : file),
+    [...manifest.files!, 'lib/extra.js'],
+  ]) {
+    expect(checkWorkspaceManifest({ dir, manifest: { ...manifest, files } }))
+      .toEqual([expect.stringContaining('package.json files must be')])
+  }
+  expect(expectedDshPackageFiles({ name: '@deepseek-ai/dsh-other-app' })).not.toContain('lib/client.js')
 })
 
 it('requires the standalone shortcut protocol and rejects unrelated runtime files', () => {
