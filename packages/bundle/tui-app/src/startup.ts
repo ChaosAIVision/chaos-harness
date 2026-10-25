@@ -1,6 +1,6 @@
 /** Terminal profile command parsing. Help never starts a Host or claims stdin. */
 import { resolve } from 'node:path'
-import { Command } from 'commander'
+import { Command, Option } from 'commander'
 import type { Context } from '@deepseek-ai/cordis'
 import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
 import type { TerminalLaunch } from './launch-types.ts'
@@ -17,7 +17,7 @@ export function parseTerminalLaunch(ctx: Context): TerminalLaunch | undefined {
     .helpOption('-h, --help', t.help)
     .option('--connect-url-file <path>', t.connect)
     .option('--host-profile <name>', t.profile, 'web')
-    .option('--cwd <path>', t.cwd, process.cwd())
+    .addOption(new Option('--cwd <path>', t.cwd).default(process.cwd(), t.cwdDefault))
     .option('--resume <id>', t.resume)
     .option('--load', t.load)
     .option('--preset <name>', t.preset)

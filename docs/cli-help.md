@@ -186,7 +186,7 @@ Options:
   --host-profile <name>      Web profile to start when this terminal owns the
                              Host (default: "web")
   --cwd <path>               working directory for new sessions (default:
-                             "/Users/chaos/.local/share/chaos-harness-wt/terminal-ui")
+                             current working directory)
   --resume <id>              resume a session by ID
   --load                     choose an existing session
   --preset <name>            preset for a new session

@@ -209,9 +209,10 @@ describe('SubagentModelSelectionConfig.widenSession', () => {
   it('rejects a structurally forged proof before persisting or appending', async () => {
     const { ctx, create } = await boot()
     const agent = await create()
-    const forged = { routes: [A, B] } as HumanApproval
+    const forged = { routes: [A, B] }
     const recorded = { ...steps('yes'), ask: async () => forged }
 
+    // @ts-expect-error Exercise runtime rejection of an unminted structural proof.
     await expect(ctx.subagentModelSelection.widenSession(agent, [A, B], recorded, signal))
       .rejects.toThrow('human approval')
     expect(recorded.persisted).toEqual([])

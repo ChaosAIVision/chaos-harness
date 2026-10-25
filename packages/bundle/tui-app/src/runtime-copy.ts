@@ -5,6 +5,7 @@ const english = {
   connect: 'attach using an authenticated URL in a private file',
   profile: 'Web profile to start when this terminal owns the Host',
   cwd: 'working directory for new sessions',
+  cwdDefault: 'current working directory',
   resume: 'resume a session by ID',
   load: 'choose an existing session',
   preset: 'preset for a new session',
@@ -19,6 +20,7 @@ const english = {
   ready: 'The Host did not become ready within the configured startup timeout.',
 }
 const chinese: typeof english = {
+  cwdDefault: '当前工作目录',
   description: '在终端中使用 DeepSeek Harness。', help: '显示帮助',
   connect: '使用私有文件中的认证 URL 连接现有主机', profile: '此终端启动主机时使用的 Web 配置',
   cwd: '新会话的工作目录', resume: '按 ID 恢复会话', load: '选择现有会话', preset: '新会话的预设',

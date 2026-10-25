@@ -29,6 +29,8 @@ describe('Terminal startup', () => {
     expect(help.launch).toBeUndefined()
     expect(help.exits).toEqual([0])
     expect(help.output).toContain('--connect-url-file')
+    expect(help.output).toContain('current working directory')
+    expect(help.output).not.toContain(process.cwd())
     expect(parse(['--load', '--resume', 'id']).exits).toEqual([1])
   })
 })
